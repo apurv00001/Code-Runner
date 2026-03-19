@@ -52,12 +52,15 @@ Every package extends `tsconfig.base.json` which sets `composite: true`. The roo
 
 ### `artifacts/web-code-editor` (`@workspace/web-code-editor`)
 
-VS Code-inspired web IDE. Monaco editor with multi-file support (.html, .css, .js), live preview iframe, terminal panel, dark/light theme, resizable panels, and local storage persistence. Download project as ZIP. Sandbox JS execution via backend API.
+VS Code-inspired web IDE with authentic VS Code UI: activity bar, file explorer, breadcrumbs, Monaco editor, split editor groups, terminal panel with Problems tab, live preview, and blue status bar.
 
 - Entry: `src/main.tsx`
 - App: `src/App.tsx` — single-file full IDE implementation
 - Preview path: `/`
-- Key dependencies: `@monaco-editor/react`, `jszip`
+- Key dependencies: `@monaco-editor/react`, `jszip`, `lucide-react`
+- File types: `.html`, `.css`, `.js`, `.jsx`, `.ts`, `.tsx`, `.json`, `.md`
+- Features: unsaved indicators (●), cursor Ln/Col, language display, word wrap toggle, minimap toggle, auto-save, keyboard shortcuts (Ctrl+S, Ctrl+`, Ctrl+\, Ctrl+W, Ctrl+N), search across files, dark/light theme
+- Render deploy: see `render.yaml` at repo root — single web service, builds both frontend and backend, serves via Express in production
 
 ## Packages
 

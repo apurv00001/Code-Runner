@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: webcode-studio
+    env: node
+    plan: free
+    buildCommand: npm install -g pnpm && pnpm install --frozen-lockfile=false && BASE_PATH=/ pnpm --filter @workspace/web-code-editor run build && pnpm --filter @workspace/api-server run build && cp -r artifacts/web-code-editor/dist/public artifacts/api-server/dist/public
+    startCommand: node artifacts/api-server/dist/index.cjs
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000

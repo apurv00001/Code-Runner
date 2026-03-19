@@ -1,13 +1,53 @@
-import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ComponentProps,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Editor from "@monaco-editor/react";
 import JSZip from "jszip";
+import {
+  Files,
+  Search,
+  GitBranch,
+  Settings,
+  X,
+  Plus,
+  ChevronRight,
+  TerminalSquare,
+  AlertCircle,
+  FileCode2,
+  WrapText,
+  Map as MapIcon,
+  Columns2,
+  Play,
+  Square,
+  ExternalLink,
+  Download,
+  Save,
+  FolderOpen,
+  RefreshCw,
+  Braces,
+} from "lucide-react";
 
-type FileLanguage = "html" | "css" | "javascript";
+type FileLanguage =
+  | "html"
+  | "css"
+  | "javascript"
+  | "javascriptreact"
+  | "typescript"
+  | "typescriptreact"
+  | "json"
+  | "markdown";
 type ThemeMode = "dark" | "light";
-type DragType = "sidebar" | "preview" | "console";
+type DragType = "sidebar" | "preview" | "panel";
 type ConsoleLevel = "log" | "warn" | "error" | "system";
 type MenuKey = "File" | "Edit" | "View" | "Run";
 type GroupId = "primary" | "secondary";
+type ActivityId = "explorer" | "search" | "git";
+type PanelTab = "terminal" | "problems" | "output";
 
 interface ProjectFile {
   id: string;
@@ -33,25 +73,92 @@ interface RunnerPayload {
   error?: string;
 }
 
-const STORAGE_KEY = "vscode-lite-project";
+interface CursorPos {
+  line: number;
+  col: number;
+}
+
+const STORAGE_KEY = "webcode-studio-v3";
 const ENV_API_BASE = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "";
 
 const createId = () =>
   globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-const inferLanguage = (fileName: string): FileLanguage | null => {
-  const lower = fileName.toLowerCase();
-  if (lower.endsWith(".html")) return "html";
-  if (lower.endsWith(".css")) return "css";
-  if (lower.endsWith(".js")) return "javascript";
-  return null;
+const EXT_LANG_MAP: Record<string, FileLanguage> = {
+  html: "html",
+  htm: "html",
+  css: "css",
+  js: "javascript",
+  mjs: "javascript",
+  cjs: "javascript",
+  jsx: "javascriptreact",
+  ts: "typescript",
+  tsx: "typescriptreact",
+  json: "json",
+  md: "markdown",
+  mdx: "markdown",
 };
 
-const parseNodeCommand = (command: string) => {
-  const parts = command.trim().split(/\s+/).filter(Boolean);
-  if (parts.length < 2 || parts[0] !== "node") return null;
-  if (!/^[./a-zA-Z0-9_-]+\.js$/.test(parts[1])) return null;
-  return { fileName: parts[1], args: parts.slice(2) };
+const LANG_LABEL: Record<FileLanguage, string> = {
+  html: "HTML",
+  css: "CSS",
+  javascript: "JavaScript",
+  javascriptreact: "JSX",
+  typescript: "TypeScript",
+  typescriptreact: "TSX",
+  json: "JSON",
+  markdown: "Markdown",
+};
+
+const FILE_COLOR: Record<FileLanguage, string> = {
+  html: "#e44d26",
+  css: "#264de4",
+  javascript: "#f7df1e",
+  javascriptreact: "#61dafb",
+  typescript: "#3178c6",
+  typescriptreact: "#3178c6",
+  json: "#fbc02d",
+  markdown: "#78909c",
+};
+
+const FILE_LETTER: Record<FileLanguage, string> = {
+  html: "H",
+  css: "C",
+  javascript: "J",
+  javascriptreact: "X",
+  typescript: "T",
+  typescriptreact: "X",
+  json: "{}",
+  markdown: "M",
+};
+
+function FileIcon({ language, size = 14 }: { language: FileLanguage; size?: number }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: size,
+        height: size,
+        borderRadius: 2,
+        backgroundColor: FILE_COLOR[language] ?? "#666",
+        color: ["javascript", "json"].includes(language) ? "#111" : "#fff",
+        fontSize: size <= 14 ? 7 : 9,
+        fontWeight: 700,
+        fontFamily: "monospace",
+        flexShrink: 0,
+        lineHeight: 1,
+      }}
+    >
+      {FILE_LETTER[language] ?? "?"}
+    </span>
+  );
+}
+
+const inferLanguage = (fileName: string): FileLanguage | null => {
+  const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
+  return EXT_LANG_MAP[ext] ?? null;
 };
 
 const seedFiles = (): ProjectFile[] => [
@@ -64,14 +171,17 @@ const seedFiles = (): ProjectFile[] => [
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WebCode Studio</title>
+    <title>My App</title>
+    <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <main class="app">
-      <h1>WebCode Studio</h1>
-      <p>Run All to render this project.</p>
-      <button id="runBtn">Run Script</button>
-    </main>
+    <div class="container">
+      <h1>Hello, World!</h1>
+      <p>Edit the files in the explorer and click <strong>Run All</strong> to see your changes.</p>
+      <button id="greetBtn" class="btn">Say Hello</button>
+      <div id="output" class="output"></div>
+    </div>
+    <script src="script.js"></script>
   </body>
 </html>`,
   },
@@ -79,88 +189,136 @@ const seedFiles = (): ProjectFile[] => [
     id: createId(),
     name: "styles.css",
     language: "css",
-    content: `body {
+    content: `* {
+  box-sizing: border-box;
   margin: 0;
+  padding: 0;
+}
+
+body {
   min-height: 100vh;
-  display: grid;
-  place-items: center;
-  background: #0f172a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
   color: #e2e8f0;
-  font-family: Inter, system-ui, sans-serif;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
-.app {
+.container {
   text-align: center;
+  padding: 2rem;
+  max-width: 560px;
 }
 
-button {
+h1 {
+  font-size: 2.5rem;
+  font-weight: 700;
+  background: linear-gradient(90deg, #38bdf8, #818cf8);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 1rem;
+}
+
+p {
+  color: #94a3b8;
+  margin-bottom: 1.5rem;
+  line-height: 1.6;
+}
+
+.btn {
+  padding: 0.6rem 1.4rem;
   border: 1px solid #38bdf8;
   background: transparent;
-  color: inherit;
-  padding: 0.4rem 0.9rem;
+  color: #38bdf8;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  transition: all 0.2s;
+}
+
+.btn:hover {
+  background: #38bdf8;
+  color: #0f172a;
+}
+
+.output {
+  margin-top: 1.2rem;
+  min-height: 40px;
+  font-size: 1.1rem;
+  color: #818cf8;
 }`,
   },
   {
     id: createId(),
     name: "script.js",
     language: "javascript",
-    content: `const button = document.getElementById("runBtn");
+    content: `const btn = document.getElementById("greetBtn");
+const output = document.getElementById("output");
 
-button?.addEventListener("click", () => {
-  console.log("Preview runtime active");
+const greetings = [
+  "Hello, World! 👋",
+  "Bonjour le monde! 🇫🇷",
+  "Hola Mundo! 🌍",
+  "Ciao Mondo! 🇮🇹",
+  "Olá Mundo! 🇧🇷",
+];
+
+let index = 0;
+
+btn?.addEventListener("click", () => {
+  output.textContent = greetings[index % greetings.length];
+  output.style.opacity = "0";
+  requestAnimationFrame(() => {
+    output.style.transition = "opacity 0.3s";
+    output.style.opacity = "1";
+  });
+  index++;
+  console.log("Greeting shown:", greetings[(index - 1) % greetings.length]);
 });`,
   },
 ];
 
 const buildPreviewDocument = (files: ProjectFile[]) => {
-  const html = files.find((file) => file.language === "html")?.content ?? "<body></body>";
+  const html = files.find((f) => f.language === "html")?.content ?? "<body></body>";
   const css = files
-    .filter((file) => file.language === "css")
-    .map((file) => file.content)
+    .filter((f) => f.language === "css")
+    .map((f) => f.content)
     .join("\n\n");
   const js = files
-    .filter((file) => file.language === "javascript")
-    .map((file) => file.content)
+    .filter((f) => f.language === "javascript")
+    .map((f) => f.content)
     .join("\n\n");
 
   const bridge = `<script>
 (() => {
   const send = (level, args) => {
-    const message = args
-      .map((arg) => {
-        if (typeof arg === "string") return arg;
-        try {
-          return JSON.stringify(arg);
-        } catch {
-          return String(arg);
-        }
-      })
-      .join(" ");
+    const message = args.map((a) => {
+      if (typeof a === "string") return a;
+      try { return JSON.stringify(a); } catch { return String(a); }
+    }).join(" ");
     parent.postMessage({ source: "preview-console", level, message }, "*");
   };
   ["log", "warn", "error"].forEach((level) => {
-    const original = console[level];
-    console[level] = (...args) => {
-      send(level, args);
-      original.apply(console, args);
-    };
+    const orig = console[level];
+    console[level] = (...args) => { send(level, args); orig.apply(console, args); };
   });
-  window.addEventListener("error", (event) => {
-    parent.postMessage({ source: "preview-console", level: "error", message: event.message }, "*");
+  window.addEventListener("error", (e) => {
+    parent.postMessage({ source: "preview-console", level: "error", message: e.message }, "*");
   });
 })();
 </script>`;
-
-  const styleTag = `<style>${css}</style>`;
-  const scriptTag = `${bridge}<script>${js}</script>`;
 
   let output = html;
   if (!output.toLowerCase().includes("<html")) {
     output = `<!doctype html><html><head></head><body>${output}</body></html>`;
   }
-
-  output = output.includes("</head>") ? output.replace("</head>", `${styleTag}</head>`) : `${styleTag}${output}`;
-  output = output.includes("</body>") ? output.replace("</body>", `${scriptTag}</body>`) : `${output}${scriptTag}`;
+  output = output.includes("</head>")
+    ? output.replace("</head>", `<style>${css}</style></head>`)
+    : `<style>${css}</style>${output}`;
+  output = output.includes("</body>")
+    ? output.replace("</body>", `${bridge}<script>${js}</script></body>`)
+    : `${output}${bridge}<script>${js}</script>`;
   return output;
 };
 
@@ -181,24 +339,32 @@ export default function App() {
   const [previewDoc, setPreviewDoc] = useState(buildPreviewDocument(initialFiles));
   const [consoleEntries, setConsoleEntries] = useState<ConsoleEntry[]>([]);
   const [markersByFile, setMarkersByFile] = useState<Record<string, number>>({});
+  const [savedContents, setSavedContents] = useState<Record<string, string>>({});
+  const [cursorPos, setCursorPos] = useState<CursorPos>({ line: 1, col: 1 });
+  const [panelTab, setPanelTab] = useState<PanelTab>("terminal");
+  const [activityId, setActivityId] = useState<ActivityId>("explorer");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [wordWrap, setWordWrap] = useState<"on" | "off">("on");
+  const [showMinimap, setShowMinimap] = useState(false);
+  const [autoSave, setAutoSave] = useState(false);
 
   const [groups, setGroups] = useState<Record<GroupId, EditorGroupState>>({
-    primary: { tabs: initialFiles.map((file) => file.id), activeId: initialFiles[0]?.id ?? null },
+    primary: { tabs: initialFiles.map((f) => f.id), activeId: initialFiles[0]?.id ?? null },
     secondary: emptyGroup(),
   });
   const [focusedGroup, setFocusedGroup] = useState<GroupId>("primary");
   const [draggedTab, setDraggedTab] = useState<{ fileId: string; fromGroup: GroupId } | null>(null);
 
   const [nodeCommand, setNodeCommand] = useState("node script.js");
-  const [terminalInput, setTerminalInput] = useState("node script.js");
+  const [terminalInput, setTerminalInput] = useState("");
   const [menuOpen, setMenuOpen] = useState<MenuKey | null>(null);
   const [isRunningJsOnly, setIsRunningJsOnly] = useState(false);
   const [isRunningCommand, setIsRunningCommand] = useState(false);
 
-  const [isTerminalOpen, setIsTerminalOpen] = useState(true);
-  const [sidebarWidth, setSidebarWidth] = useState(270);
-  const [editorWidthPercent, setEditorWidthPercent] = useState(64);
-  const [consoleHeight, setConsoleHeight] = useState(190);
+  const [isPanelOpen, setIsPanelOpenRaw] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(240);
+  const [editorWidthPercent, setEditorWidthPercent] = useState(60);
+  const [panelHeight, setPanelHeight] = useState(200);
   const [drag, setDrag] = useState<{
     type: DragType;
     startX: number;
@@ -208,39 +374,56 @@ export default function App() {
 
   const topPanelRef = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
-  const editorRefs = useRef<Partial<Record<GroupId, Parameters<NonNullable<ComponentProps<typeof Editor>["onMount"]>>[0]>>>({});
+  const consoleEndRef = useRef<HTMLDivElement>(null);
+  const editorRefs = useRef<
+    Partial<
+      Record<
+        GroupId,
+        Parameters<NonNullable<ComponentProps<typeof Editor>["onMount"]>>[0]
+      >
+    >
+  >({});
 
   const isDark = theme === "dark";
-
-  const fileMap = useMemo(() => new Map(files.map((file) => [file.id, file])), [files]);
+  const fileMap = useMemo(() => new Map(files.map((f) => [f.id, f])), [files]);
   const activeFileId = groups[focusedGroup].activeId;
-  const activeFile = activeFileId ? fileMap.get(activeFileId) ?? null : null;
-  const markerCount = activeFile ? markersByFile[activeFile.id] ?? 0 : 0;
+  const activeFile = activeFileId ? (fileMap.get(activeFileId) ?? null) : null;
+  const totalMarkers = Object.values(markersByFile).reduce((a, b) => a + b, 0);
+
+  const isUnsaved = useCallback(
+    (fileId: string) => {
+      const file = fileMap.get(fileId);
+      if (!file) return false;
+      if (!(fileId in savedContents)) return false;
+      return savedContents[fileId] !== file.content;
+    },
+    [fileMap, savedContents]
+  );
 
   const appendConsole = useCallback((level: ConsoleLevel, message: string) => {
     setConsoleEntries((prev) => [...prev, { id: createId(), level, message }]);
   }, []);
 
-  const appendSystem = useCallback((message: string) => appendConsole("system", message), [appendConsole]);
+  const appendSystem = useCallback(
+    (message: string) => appendConsole("system", message),
+    [appendConsole]
+  );
 
   const callRunnerApi = useCallback(async (path: string, body: unknown) => {
     const candidates = resolveApiCandidates();
     let lastError: string | null = null;
-
     for (const base of candidates) {
       try {
-        const response = await fetch(`${base}${path}`, {
+        const res = await fetch(`${base}${path}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
-        const payload = (await response.json()) as RunnerPayload;
-        return payload;
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : "Failed to contact backend";
+        return (await res.json()) as RunnerPayload;
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : "Failed to contact backend";
       }
     }
-
     throw new Error(lastError ?? "Failed to contact backend");
   }, []);
 
@@ -258,193 +441,159 @@ export default function App() {
       const group = prev[groupId];
       if (!group.tabs.includes(fileId)) return prev;
       const nextTabs = group.tabs.filter((id) => id !== fileId);
-      let nextActive = group.activeId;
-      if (group.activeId === fileId) {
-        nextActive = nextTabs[nextTabs.length - 1] ?? null;
-      }
+      const nextActive =
+        group.activeId === fileId ? (nextTabs[nextTabs.length - 1] ?? null) : group.activeId;
       return { ...prev, [groupId]: { tabs: nextTabs, activeId: nextActive } };
     });
   }, []);
 
-  const moveTab = useCallback((fromGroup: GroupId, toGroup: GroupId, fileId: string, toIndex?: number) => {
-    setGroups((prev) => {
-      const fromTabs = prev[fromGroup].tabs.filter((id) => id !== fileId);
-      const targetTabsBase = prev[toGroup].tabs.filter((id) => id !== fileId);
-      const insertAt = typeof toIndex === "number" ? Math.min(Math.max(0, toIndex), targetTabsBase.length) : targetTabsBase.length;
-      const targetTabs = [...targetTabsBase.slice(0, insertAt), fileId, ...targetTabsBase.slice(insertAt)];
-
-      const next = {
-        ...prev,
-        [fromGroup]: {
-          tabs: fromTabs,
-          activeId:
-            prev[fromGroup].activeId === fileId
-              ? fromTabs[Math.max(0, Math.min(insertAt, fromTabs.length - 1))] ?? null
-              : prev[fromGroup].activeId,
-        },
-        [toGroup]: {
-          tabs: targetTabs,
-          activeId: fileId,
-        },
-      };
-      return next;
-    });
-    setFocusedGroup(toGroup);
-  }, []);
+  const moveTab = useCallback(
+    (fromGroup: GroupId, toGroup: GroupId, fileId: string, toIndex?: number) => {
+      setGroups((prev) => {
+        const fromTabs = prev[fromGroup].tabs.filter((id) => id !== fileId);
+        const targetBase = prev[toGroup].tabs.filter((id) => id !== fileId);
+        const at =
+          typeof toIndex === "number"
+            ? Math.min(Math.max(0, toIndex), targetBase.length)
+            : targetBase.length;
+        const targetTabs = [...targetBase.slice(0, at), fileId, ...targetBase.slice(at)];
+        return {
+          ...prev,
+          [fromGroup]: {
+            tabs: fromTabs,
+            activeId:
+              prev[fromGroup].activeId === fileId
+                ? (fromTabs[Math.max(0, Math.min(at, fromTabs.length - 1))] ?? null)
+                : prev[fromGroup].activeId,
+          },
+          [toGroup]: { tabs: targetTabs, activeId: fileId },
+        };
+      });
+      setFocusedGroup(toGroup);
+    },
+    []
+  );
 
   const splitActiveTab = useCallback(() => {
-    const current = groups[focusedGroup];
-    if (!current.activeId) return;
-    const targetGroup: GroupId = focusedGroup === "primary" ? "secondary" : "primary";
-    moveTab(focusedGroup, targetGroup, current.activeId);
+    const cur = groups[focusedGroup];
+    if (!cur.activeId) return;
+    const target: GroupId = focusedGroup === "primary" ? "secondary" : "primary";
+    moveTab(focusedGroup, target, cur.activeId);
   }, [focusedGroup, groups, moveTab]);
 
   const runNodeCommandInBrowser = useCallback(
     (command: string) => {
-      const parsed = parseNodeCommand(command);
-      if (!parsed) {
+      const parts = command.trim().split(/\s+/).filter(Boolean);
+      if (parts.length < 2 || parts[0] !== "node" || !/^[./a-zA-Z0-9_-]+\.js$/.test(parts[1])) {
         appendSystem("Unsupported command. Use: node <file.js> [args]");
         return;
       }
-
+      const fileName = parts[1];
+      const args = parts.slice(2);
       const jsFiles = new Map(
-        files.filter((file) => file.language === "javascript").map((file) => [file.name, file.content])
+        files.filter((f) => f.language === "javascript").map((f) => [f.name, f.content])
       );
-      if (!jsFiles.has(parsed.fileName)) {
-        appendConsole("error", `File not found: ${parsed.fileName}`);
+      if (!jsFiles.has(fileName)) {
+        appendConsole("error", `File not found: ${fileName}`);
         return;
       }
-
-      appendSystem("Backend unavailable. Running in browser Node-like runtime.");
-
-      const pushLog = (level: "log" | "warn" | "error", args: unknown[]) => {
-        const message = args
-          .map((arg) => {
-            if (typeof arg === "string") return arg;
-            try {
-              return JSON.stringify(arg);
-            } catch {
-              return String(arg);
-            }
-          })
-          .join(" ");
-        appendConsole(level, message);
+      appendSystem("Backend unavailable — running in browser Node-like runtime.");
+      const pushLog = (level: "log" | "warn" | "error", a: unknown[]) => {
+        appendConsole(
+          level,
+          a
+            .map((x) => {
+              if (typeof x === "string") return x;
+              try {
+                return JSON.stringify(x);
+              } catch {
+                return String(x);
+              }
+            })
+            .join(" ")
+        );
       };
-
-      const moduleCache = new Map<string, { exports: unknown }>();
-      const resolvePath = (importer: string, specifier: string) => {
-        if (!specifier.startsWith("./") && !specifier.startsWith("../")) return null;
-        const importerParts = importer.split("/");
-        importerParts.pop();
-        const segments = [...importerParts, ...specifier.split("/")];
-        const normalized: string[] = [];
-        segments.forEach((segment) => {
-          if (!segment || segment === ".") return;
-          if (segment === "..") {
-            normalized.pop();
-            return;
-          }
-          normalized.push(segment);
+      const cache = new Map<string, { exports: unknown }>();
+      const resolvePath = (from: string, spec: string) => {
+        if (!spec.startsWith("./") && !spec.startsWith("../")) return null;
+        const parts2 = from.split("/");
+        parts2.pop();
+        const segs = [...parts2, ...spec.split("/")];
+        const norm: string[] = [];
+        segs.forEach((s) => {
+          if (!s || s === ".") return;
+          if (s === "..") { norm.pop(); return; }
+          norm.push(s);
         });
-        const resolved = normalized.join("/");
-        return resolved.endsWith(".js") ? resolved : `${resolved}.js`;
+        const r = norm.join("/");
+        return r.endsWith(".js") ? r : `${r}.js`;
       };
-
-      const runModule = (fileName: string): unknown => {
-        const cached = moduleCache.get(fileName);
+      const runModule = (fn: string): unknown => {
+        const cached = cache.get(fn);
         if (cached) return cached.exports;
-
-        const code = jsFiles.get(fileName);
-        if (typeof code !== "string") {
-          throw new Error(`Cannot find module '${fileName}'`);
-        }
-
-        const module = { exports: {} as unknown };
-        moduleCache.set(fileName, module);
-
-        const localRequire = (specifier: string) => {
-          const resolved = resolvePath(fileName, specifier);
-          if (!resolved) {
-            throw new Error(
-              `Only relative require paths are supported in browser runtime. Received: ${specifier}`
-            );
-          }
-          return runModule(resolved);
+        const code = jsFiles.get(fn);
+        if (!code) throw new Error(`Cannot find module '${fn}'`);
+        const mod = { exports: {} as unknown };
+        cache.set(fn, mod);
+        const localRequire = (spec: string) => {
+          const r = resolvePath(fn, spec);
+          if (!r) throw new Error(`Only relative requires supported. Got: ${spec}`);
+          return runModule(r);
         };
-
-        const dirname = fileName.includes("/") ? fileName.slice(0, fileName.lastIndexOf("/")) : ".";
-        const processShim = {
-          argv: ["node", fileName, ...parsed.args],
-          env: {},
-          platform: "browser",
-          cwd: () => "/",
-        };
-
-        const runtimeConsole = {
-          log: (...args: unknown[]) => pushLog("log", args),
-          warn: (...args: unknown[]) => pushLog("warn", args),
-          error: (...args: unknown[]) => pushLog("error", args),
-        };
-
+        const dir = fn.includes("/") ? fn.slice(0, fn.lastIndexOf("/")) : ".";
         const wrapped = new Function(
-          "require",
-          "module",
-          "exports",
-          "console",
-          "process",
-          "__filename",
-          "__dirname",
+          "require", "module", "exports", "console", "process", "__filename", "__dirname",
           `"use strict";\n${code}`
         );
-
-        wrapped(localRequire, module, module.exports, runtimeConsole, processShim, fileName, dirname);
-        return module.exports;
+        wrapped(
+          localRequire, mod, mod.exports,
+          { log: (...a: unknown[]) => pushLog("log", a), warn: (...a: unknown[]) => pushLog("warn", a), error: (...a: unknown[]) => pushLog("error", a) },
+          { argv: ["node", fn, ...args], env: {}, platform: "browser", cwd: () => "/" },
+          fn, dir
+        );
+        return mod.exports;
       };
-
-      try {
-        runModule(parsed.fileName);
-      } catch (error) {
-        appendConsole("error", error instanceof Error ? error.message : "Browser Node runtime error");
+      try { runModule(fileName); } catch (e) {
+        appendConsole("error", e instanceof Error ? e.message : "Runtime error");
       }
     },
     [appendConsole, appendSystem, files]
   );
 
   const runAll = useCallback(() => {
-    appendSystem("Run All started.");
+    appendSystem("▶ Run All");
     setPreviewDoc(buildPreviewDocument(files));
   }, [appendSystem, files]);
 
   const runJsOnly = useCallback(async () => {
-    const preferred = activeFile?.language === "javascript" ? activeFile : null;
-    const jsFile = preferred ?? files.find((file) => file.language === "javascript");
-    if (!jsFile) {
-      appendSystem("No JavaScript file available.");
-      return;
-    }
-
+    const jsFile =
+      activeFile?.language === "javascript"
+        ? activeFile
+        : files.find((f) => f.language === "javascript");
+    if (!jsFile) { appendSystem("No JavaScript file found."); return; }
     setIsRunningJsOnly(true);
-    appendSystem(`Run JS Only started for ${jsFile.name}.`);
-
+    appendSystem(`▶ Run JS: ${jsFile.name}`);
     try {
       const payload = await callRunnerApi("/api/run-js", { code: jsFile.content });
       (payload.logs ?? []).forEach((entry) => {
-        const level = entry.level === "warn" || entry.level === "error" ? entry.level : "log";
-        appendConsole(level, entry.level === "result" ? `Result: ${entry.message}` : entry.message);
+        const lv = entry.level === "warn" || entry.level === "error" ? entry.level : "log";
+        appendConsole(lv, entry.level === "result" ? `↩ ${entry.message}` : entry.message);
       });
       if (!payload.ok) appendConsole("error", payload.error ?? "Execution failed.");
     } catch {
-      appendSystem("Backend unavailable. Running JS in browser fallback.");
+      appendSystem("Backend unavailable — using browser fallback.");
       try {
-        const runtimeConsole = {
-          log: (...args: unknown[]) => appendConsole("log", args.map(String).join(" ")),
-          warn: (...args: unknown[]) => appendConsole("warn", args.map(String).join(" ")),
-          error: (...args: unknown[]) => appendConsole("error", args.map(String).join(" ")),
-        };
-        const runner = new Function("console", `"use strict";\n${jsFile.content}`);
-        runner(runtimeConsole);
-      } catch (error) {
-        appendConsole("error", error instanceof Error ? error.message : "Browser fallback runtime error");
+        const runner = new Function(
+          "console",
+          `"use strict";\n${jsFile.content}`
+        );
+        runner({
+          log: (...a: unknown[]) => appendConsole("log", a.map(String).join(" ")),
+          warn: (...a: unknown[]) => appendConsole("warn", a.map(String).join(" ")),
+          error: (...a: unknown[]) => appendConsole("error", a.map(String).join(" ")),
+        });
+      } catch (e) {
+        appendConsole("error", e instanceof Error ? e.message : "Error");
       }
     } finally {
       setIsRunningJsOnly(false);
@@ -454,26 +603,22 @@ export default function App() {
   const runNodeCommand = useCallback(
     async (command: string) => {
       const trimmed = command.trim();
-      if (!trimmed) {
-        appendSystem("Enter command. Example: node script.js");
-        return;
-      }
-      appendSystem(`Running command: ${trimmed}`);
+      if (!trimmed) { appendSystem("Enter a command, e.g. node script.js"); return; }
+      appendSystem(`$ ${trimmed}`);
       setIsRunningCommand(true);
       setNodeCommand(trimmed);
-
       try {
         const payload = await callRunnerApi("/api/run-command", {
           command: trimmed,
           files: files
-            .filter((file) => file.language === "javascript")
-            .map((file) => ({ name: file.name, content: file.content })),
+            .filter((f) => f.language === "javascript")
+            .map((f) => ({ name: f.name, content: f.content })),
         });
         (payload.logs ?? []).forEach((entry) => {
-          const level = entry.level === "warn" || entry.level === "error" ? entry.level : "log";
-          appendConsole(level, entry.level === "result" ? `Result: ${entry.message}` : entry.message);
+          const lv = entry.level === "warn" || entry.level === "error" ? entry.level : "log";
+          appendConsole(lv, entry.level === "result" ? `↩ ${entry.message}` : entry.message);
         });
-        if (!payload.ok) appendConsole("error", payload.error ?? "Command execution failed.");
+        if (!payload.ok) appendConsole("error", payload.error ?? "Command failed.");
       } catch {
         runNodeCommandInBrowser(trimmed);
       } finally {
@@ -484,25 +629,15 @@ export default function App() {
   );
 
   const createFile = useCallback(() => {
-    const name = window.prompt("New filename (.html, .css, .js)", "new-file.js")?.trim() ?? "";
+    const name = window.prompt("New file name (.html .css .js .ts .tsx .json .md)", "new.js")?.trim() ?? "";
     if (!name) return;
     const language = inferLanguage(name);
-    if (!language) {
-      appendSystem("Only .html, .css, and .js files are supported.");
-      return;
-    }
-    if (files.some((file) => file.name.toLowerCase() === name.toLowerCase())) {
+    if (!language) { appendSystem("Unsupported extension. Use .html .css .js .ts .tsx .json .md"); return; }
+    if (files.some((f) => f.name.toLowerCase() === name.toLowerCase())) {
       appendSystem("A file with that name already exists.");
       return;
     }
-
-    const newFile: ProjectFile = {
-      id: createId(),
-      name,
-      language,
-      content: language === "html" ? "<div></div>" : "",
-    };
-
+    const newFile: ProjectFile = { id: createId(), name, language, content: "" };
     setFiles((prev) => [...prev, newFile]);
     openFileInGroup(newFile.id, focusedGroup);
   }, [appendSystem, files, focusedGroup, openFileInGroup]);
@@ -511,18 +646,17 @@ export default function App() {
     (fileId: string) => {
       const target = fileMap.get(fileId);
       if (!target) return;
-      const nextName = window.prompt("Rename file", target.name)?.trim() ?? "";
-      if (!nextName || nextName === target.name) return;
-      const nextLanguage = inferLanguage(nextName);
-      if (!nextLanguage) {
-        appendSystem("Rename failed: extension must be .html, .css, or .js.");
+      const next = window.prompt("Rename file", target.name)?.trim() ?? "";
+      if (!next || next === target.name) return;
+      const nextLang = inferLanguage(next);
+      if (!nextLang) { appendSystem("Unsupported extension."); return; }
+      if (files.some((f) => f.id !== fileId && f.name.toLowerCase() === next.toLowerCase())) {
+        appendSystem("Name already taken.");
         return;
       }
-      if (files.some((file) => file.id !== fileId && file.name.toLowerCase() === nextName.toLowerCase())) {
-        appendSystem("Rename failed: file name already exists.");
-        return;
-      }
-      setFiles((prev) => prev.map((file) => (file.id === fileId ? { ...file, name: nextName, language: nextLanguage } : file)));
+      setFiles((prev) =>
+        prev.map((f) => (f.id === fileId ? { ...f, name: next, language: nextLang } : f))
+      );
     },
     [appendSystem, fileMap, files]
   );
@@ -530,19 +664,15 @@ export default function App() {
   const deleteFile = useCallback(
     (fileId: string) => {
       const target = fileMap.get(fileId);
-      if (!target) return;
-      if (!window.confirm(`Delete ${target.name}?`)) return;
-
-      setFiles((prev) => prev.filter((file) => file.id !== fileId));
+      if (!target || !window.confirm(`Delete ${target.name}?`)) return;
+      setFiles((prev) => prev.filter((f) => f.id !== fileId));
       setGroups((prev) => {
-        const next: Record<GroupId, EditorGroupState> = {
-          primary: { ...prev.primary },
-          secondary: { ...prev.secondary },
-        };
-        (["primary", "secondary"] as GroupId[]).forEach((groupId) => {
-          const tabs = next[groupId].tabs.filter((id) => id !== fileId);
-          const activeId = next[groupId].activeId === fileId ? tabs[tabs.length - 1] ?? null : next[groupId].activeId;
-          next[groupId] = { tabs, activeId };
+        const next = { ...prev };
+        (["primary", "secondary"] as GroupId[]).forEach((gid) => {
+          const tabs = next[gid].tabs.filter((id) => id !== fileId);
+          const activeId =
+            next[gid].activeId === fileId ? (tabs[tabs.length - 1] ?? null) : next[gid].activeId;
+          next[gid] = { tabs, activeId };
         });
         return next;
       });
@@ -551,77 +681,68 @@ export default function App() {
   );
 
   const updateFileContent = useCallback((fileId: string, content: string) => {
-    setFiles((prev) => prev.map((file) => (file.id === fileId ? { ...file, content } : file)));
+    setFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, content } : f)));
   }, []);
 
   const saveProject = useCallback(() => {
+    const snapshot: Record<string, string> = {};
+    files.forEach((f) => { snapshot[f.id] = f.content; });
+    setSavedContents(snapshot);
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ files, groups, theme }));
-    appendSystem("Project saved.");
+    appendSystem("✓ Project saved");
   }, [appendSystem, files, groups, theme]);
 
   const loadProject = useCallback(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (!saved) {
-      appendSystem("No project found in local storage.");
-      return;
-    }
-
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) { appendSystem("No saved project found."); return; }
     try {
-      const parsed = JSON.parse(saved) as {
+      const parsed = JSON.parse(raw) as {
         files?: ProjectFile[];
         groups?: Record<GroupId, EditorGroupState>;
         theme?: ThemeMode;
       };
-      const restoredFiles = (parsed.files ?? []).filter(
-        (file): file is ProjectFile =>
-          typeof file?.id === "string" &&
-          typeof file?.name === "string" &&
-          typeof file?.content === "string" &&
-          inferLanguage(file.name) !== null
+      const restored = (parsed.files ?? []).filter(
+        (f): f is ProjectFile =>
+          typeof f?.id === "string" &&
+          typeof f?.name === "string" &&
+          typeof f?.content === "string" &&
+          inferLanguage(f.name) !== null
       );
-      if (!restoredFiles.length) {
-        appendSystem("Saved project is empty.");
-        return;
-      }
-
-      const fileIds = new Set(restoredFiles.map((file) => file.id));
-      const rawGroups = parsed.groups;
-      const normalizeGroup = (source: EditorGroupState | undefined): EditorGroupState => {
-        const tabs = (source?.tabs ?? []).filter((id) => fileIds.has(id));
-        const activeId = source?.activeId && tabs.includes(source.activeId) ? source.activeId : tabs[0] ?? null;
-        return { tabs, activeId };
+      if (!restored.length) { appendSystem("Saved project is empty."); return; }
+      const ids = new Set(restored.map((f) => f.id));
+      const norm = (g?: EditorGroupState): EditorGroupState => {
+        const tabs = (g?.tabs ?? []).filter((id) => ids.has(id));
+        return { tabs, activeId: g?.activeId && tabs.includes(g.activeId) ? g.activeId : (tabs[0] ?? null) };
       };
-
       const nextGroups: Record<GroupId, EditorGroupState> = {
-        primary: normalizeGroup(rawGroups?.primary),
-        secondary: normalizeGroup(rawGroups?.secondary),
+        primary: norm(parsed.groups?.primary),
+        secondary: norm(parsed.groups?.secondary),
       };
       if (!nextGroups.primary.tabs.length) {
-        nextGroups.primary = { tabs: restoredFiles.map((file) => file.id), activeId: restoredFiles[0].id };
+        nextGroups.primary = { tabs: restored.map((f) => f.id), activeId: restored[0].id };
       }
-
-      setFiles(restoredFiles);
+      const snapshot: Record<string, string> = {};
+      restored.forEach((f) => { snapshot[f.id] = f.content; });
+      setFiles(restored);
       setGroups(nextGroups);
-      setFocusedGroup(nextGroups.primary.activeId ? "primary" : "secondary");
+      setSavedContents(snapshot);
       setTheme(parsed.theme === "light" ? "light" : "dark");
-      setPreviewDoc(buildPreviewDocument(restoredFiles));
-      appendSystem("Project loaded.");
-    } catch {
-      appendSystem("Failed to parse saved project.");
-    }
+      setPreviewDoc(buildPreviewDocument(restored));
+      appendSystem("✓ Project loaded");
+    } catch { appendSystem("Failed to parse saved project."); }
   }, [appendSystem]);
 
   const downloadProject = useCallback(async () => {
     const zip = new JSZip();
-    files.forEach((file) => zip.file(file.name, file.content));
+    files.forEach((f) => zip.file(f.name, f.content));
     const blob = await zip.generateAsync({ type: "blob" });
     const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "webcode-studio.zip";
-    link.click();
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "webcode-studio.zip";
+    a.click();
     URL.revokeObjectURL(url);
-    appendSystem("ZIP downloaded.");
+    appendSystem("✓ ZIP downloaded");
   }, [appendSystem, files]);
 
   const formatActive = useCallback(() => {
@@ -630,204 +751,191 @@ export default function App() {
 
   const openPreviewInNewTab = useCallback(() => {
     const doc = buildPreviewDocument(files);
-    const popup = window.open("", "_blank");
-    if (!popup) {
-      appendSystem("Popup blocked. Allow popups and try again.");
-      return;
-    }
-    popup.document.open();
-    popup.document.write(doc);
-    popup.document.close();
+    const win = window.open("", "_blank");
+    if (!win) { appendSystem("Popup blocked."); return; }
+    win.document.open();
+    win.document.write(doc);
+    win.document.close();
   }, [appendSystem, files]);
 
   const executeTerminalCommand = useCallback(
     async (raw: string) => {
-      const command = raw.trim();
-      if (!command) return;
-      appendSystem(`$ ${command}`);
-
-      if (command === "run all") {
-        runAll();
-        return;
-      }
-      if (command === "run js") {
-        await runJsOnly();
-        return;
-      }
-      if (command === "clear") {
-        setConsoleEntries([]);
-        return;
-      }
-      if (command === "format") {
-        formatActive();
-        return;
-      }
-      if (command === "save") {
-        saveProject();
-        return;
-      }
-      if (command === "load") {
-        loadProject();
-        return;
-      }
-      if (command === "zip") {
-        await downloadProject();
-        return;
-      }
-      if (command.startsWith("node ")) {
-        await runNodeCommand(command);
-        return;
-      }
-
-      appendConsole("warn", "Unknown command. Use run all, run js, node <file.js>, format, save, load, zip, clear.");
+      const cmd = raw.trim();
+      if (!cmd) return;
+      appendSystem(`$ ${cmd}`);
+      const cmdMap: Record<string, () => void | Promise<void>> = {
+        "run all": runAll,
+        "run js": () => runJsOnly(),
+        clear: () => setConsoleEntries([]),
+        format: formatActive,
+        save: saveProject,
+        load: loadProject,
+        zip: () => downloadProject(),
+        help: () =>
+          appendConsole(
+            "system",
+            "Commands: run all, run js, node <file.js>, clear, format, save, load, zip"
+          ),
+      };
+      if (cmd in cmdMap) { await cmdMap[cmd](); return; }
+      if (cmd.startsWith("node ")) { await runNodeCommand(cmd); return; }
+      appendConsole("warn", `Unknown command: "${cmd}". Type help for available commands.`);
     },
     [appendConsole, appendSystem, downloadProject, formatActive, loadProject, runAll, runJsOnly, runNodeCommand, saveProject]
   );
 
+  const searchResults = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    const q = searchQuery.toLowerCase();
+    const results: Array<{ file: ProjectFile; lines: Array<{ lineNum: number; text: string }> }> = [];
+    for (const file of files) {
+      const lines = file.content.split("\n");
+      const matched = lines
+        .map((text, i) => ({ lineNum: i + 1, text }))
+        .filter(({ text }) => text.toLowerCase().includes(q));
+      if (matched.length) results.push({ file, lines: matched });
+    }
+    return results;
+  }, [files, searchQuery]);
+
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (!saved) return;
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
     try {
-      const parsed = JSON.parse(saved) as {
+      const parsed = JSON.parse(raw) as {
         files?: ProjectFile[];
         groups?: Record<GroupId, EditorGroupState>;
         theme?: ThemeMode;
       };
       if (!parsed.files?.length) return;
-
-      const restoredFiles = parsed.files.filter(
-        (file): file is ProjectFile =>
-          typeof file?.id === "string" &&
-          typeof file?.name === "string" &&
-          typeof file?.content === "string" &&
-          inferLanguage(file.name) !== null
+      const restored = parsed.files.filter(
+        (f): f is ProjectFile =>
+          typeof f?.id === "string" &&
+          typeof f?.name === "string" &&
+          typeof f?.content === "string" &&
+          inferLanguage(f.name) !== null
       );
-      if (!restoredFiles.length) return;
-
-      const fileIds = new Set(restoredFiles.map((file) => file.id));
-      const normalize = (group: EditorGroupState | undefined): EditorGroupState => {
-        const tabs = (group?.tabs ?? []).filter((id) => fileIds.has(id));
-        return {
-          tabs,
-          activeId: group?.activeId && tabs.includes(group.activeId) ? group.activeId : tabs[0] ?? null,
-        };
+      if (!restored.length) return;
+      const ids = new Set(restored.map((f) => f.id));
+      const norm = (g?: EditorGroupState): EditorGroupState => {
+        const tabs = (g?.tabs ?? []).filter((id) => ids.has(id));
+        return { tabs, activeId: g?.activeId && tabs.includes(g.activeId) ? g.activeId : (tabs[0] ?? null) };
       };
-
-      const restoredGroups: Record<GroupId, EditorGroupState> = {
-        primary: normalize(parsed.groups?.primary),
-        secondary: normalize(parsed.groups?.secondary),
+      const nextGroups: Record<GroupId, EditorGroupState> = {
+        primary: norm(parsed.groups?.primary),
+        secondary: norm(parsed.groups?.secondary),
       };
-      if (!restoredGroups.primary.tabs.length) {
-        restoredGroups.primary = { tabs: restoredFiles.map((file) => file.id), activeId: restoredFiles[0].id };
+      if (!nextGroups.primary.tabs.length) {
+        nextGroups.primary = { tabs: restored.map((f) => f.id), activeId: restored[0].id };
       }
-
-      setFiles(restoredFiles);
-      setGroups(restoredGroups);
+      const snapshot: Record<string, string> = {};
+      restored.forEach((f) => { snapshot[f.id] = f.content; });
+      setFiles(restored);
+      setGroups(nextGroups);
+      setSavedContents(snapshot);
       setTheme(parsed.theme === "light" ? "light" : "dark");
-      setPreviewDoc(buildPreviewDocument(restoredFiles));
-      appendSystem("Project restored from local storage.");
-    } catch {
-      appendSystem("Saved project is invalid and was ignored.");
-    }
-  }, [appendSystem]);
+      setPreviewDoc(buildPreviewDocument(restored));
+    } catch { /* ignore */ }
+  }, []);
 
   useEffect(() => {
-    const receiveMessage = (event: MessageEvent) => {
-      if (event.data?.source !== "preview-console") return;
-      const level = event.data.level === "warn" || event.data.level === "error" ? event.data.level : "log";
-      const message = typeof event.data.message === "string" ? event.data.message : String(event.data.message);
-      appendConsole(level, message);
+    const receiveMessage = (e: MessageEvent) => {
+      if (e.data?.source !== "preview-console") return;
+      const lv = e.data.level === "warn" || e.data.level === "error" ? e.data.level : "log";
+      appendConsole(lv, String(e.data.message ?? ""));
     };
     window.addEventListener("message", receiveMessage);
     return () => window.removeEventListener("message", receiveMessage);
   }, [appendConsole]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ files, groups, theme }));
-  }, [files, groups, theme]);
+    if (autoSave) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ files, groups, theme }));
+    }
+  }, [files, groups, theme, autoSave]);
 
   useEffect(() => {
     setGroups((prev) => {
-      const available = new Set(files.map((file) => file.id));
-      const cleanGroup = (group: EditorGroupState): EditorGroupState => {
-        const tabs = group.tabs.filter((id) => available.has(id));
-        const activeId = group.activeId && tabs.includes(group.activeId) ? group.activeId : tabs[0] ?? null;
-        return { tabs, activeId };
+      const available = new Set(files.map((f) => f.id));
+      const clean = (g: EditorGroupState): EditorGroupState => {
+        const tabs = g.tabs.filter((id) => available.has(id));
+        return { tabs, activeId: g.activeId && tabs.includes(g.activeId) ? g.activeId : (tabs[0] ?? null) };
       };
-
-      const nextPrimary = cleanGroup(prev.primary);
-      const nextSecondary = cleanGroup(prev.secondary);
-
-      if (!nextPrimary.tabs.length && files.length) {
-        return {
-          primary: { tabs: files.map((file) => file.id), activeId: files[0].id },
-          secondary: nextSecondary,
-        };
+      const np = clean(prev.primary);
+      const ns = clean(prev.secondary);
+      if (!np.tabs.length && files.length) {
+        return { primary: { tabs: files.map((f) => f.id), activeId: files[0].id }, secondary: ns };
       }
-      return { primary: nextPrimary, secondary: nextSecondary };
+      return { primary: np, secondary: ns };
     });
   }, [files]);
 
   useEffect(() => {
-    if (!drag) return;
+    consoleEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [consoleEntries]);
 
-    const onMove = (event: MouseEvent) => {
+  useEffect(() => {
+    if (!drag) return;
+    const onMove = (e: MouseEvent) => {
       if (drag.type === "sidebar") {
-        setSidebarWidth(Math.min(420, Math.max(210, drag.startValue + (event.clientX - drag.startX))));
+        setSidebarWidth(Math.min(500, Math.max(160, drag.startValue + (e.clientX - drag.startX))));
         return;
       }
       if (drag.type === "preview") {
-        const width = topPanelRef.current?.getBoundingClientRect().width ?? 0;
-        if (width < 200) return;
-        const delta = ((event.clientX - drag.startX) / width) * 100;
-        setEditorWidthPercent(Math.min(84, Math.max(28, drag.startValue + delta)));
+        const w = topPanelRef.current?.getBoundingClientRect().width ?? 0;
+        if (w < 200) return;
+        const delta = ((e.clientX - drag.startX) / w) * 100;
+        setEditorWidthPercent(Math.min(85, Math.max(20, drag.startValue + delta)));
         return;
       }
-      const height = workspaceRef.current?.getBoundingClientRect().height ?? 0;
-      if (height < 200) return;
-      const delta = drag.startY - event.clientY;
-      setConsoleHeight(Math.min(420, Math.max(110, drag.startValue + delta)));
+      const h = workspaceRef.current?.getBoundingClientRect().height ?? 0;
+      if (h < 200) return;
+      setPanelHeight(Math.min(500, Math.max(100, drag.startValue + (drag.startY - e.clientY))));
     };
-
     const onUp = () => setDrag(null);
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
-    return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
+    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
   }, [drag]);
 
-  const menuItems: Record<MenuKey, Array<{ label: string; action: () => void }>> = {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const ctrl = e.ctrlKey || e.metaKey;
+      if (ctrl && e.key === "s") { e.preventDefault(); saveProject(); }
+      if (ctrl && e.key === "`") { e.preventDefault(); setIsPanelOpenRaw((p) => !p); }
+      if (ctrl && e.key === "\\") { e.preventDefault(); splitActiveTab(); }
+      if (ctrl && e.key === "w") { e.preventDefault(); if (activeFileId) closeTab(focusedGroup, activeFileId); }
+      if (ctrl && e.key === "n") { e.preventDefault(); createFile(); }
+      if (e.key === "Escape") setMenuOpen(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [saveProject, splitActiveTab, activeFileId, closeTab, focusedGroup, createFile]);
+
+
+  const menuItems: Record<MenuKey, Array<{ label: string; shortcut?: string; action: () => void }>> = {
     File: [
-      { label: "New File", action: createFile },
-      { label: "Save", action: saveProject },
-      { label: "Load", action: loadProject },
-      { label: "Download ZIP", action: () => void downloadProject() },
+      { label: "New File", shortcut: "Ctrl+N", action: createFile },
+      { label: "Save", shortcut: "Ctrl+S", action: saveProject },
+      { label: "Load from Storage", action: loadProject },
+      { label: "Download as ZIP", action: () => void downloadProject() },
     ],
     Edit: [
-      { label: "Format", action: formatActive },
-      {
-        label: "Rename Active File",
-        action: () => {
-          if (activeFile) renameFile(activeFile.id);
-        },
-      },
-      {
-        label: "Delete Active File",
-        action: () => {
-          if (activeFile) deleteFile(activeFile.id);
-        },
-      },
-      { label: "Split Active Tab", action: splitActiveTab },
+      { label: "Format Document", action: formatActive },
+      { label: "Rename File", action: () => { if (activeFile) renameFile(activeFile.id); } },
+      { label: "Delete File", action: () => { if (activeFile) deleteFile(activeFile.id); } },
+      { label: "Split Editor", shortcut: "Ctrl+\\", action: splitActiveTab },
     ],
     View: [
-      { label: isTerminalOpen ? "Hide Terminal" : "Show Terminal", action: () => setIsTerminalOpen((prev) => !prev) },
-      { label: "Open Preview In New Tab", action: openPreviewInNewTab },
-      { label: isDark ? "Switch To Light Theme" : "Switch To Dark Theme", action: () => setTheme((prev) => (prev === "dark" ? "light" : "dark")) },
+      { label: isPanelOpen ? "Hide Panel" : "Show Panel", shortcut: "Ctrl+`", action: () => setIsPanelOpenRaw((p) => !p) },
+      { label: wordWrap === "on" ? "Disable Word Wrap" : "Enable Word Wrap", action: () => setWordWrap((p) => (p === "on" ? "off" : "on")) },
+      { label: showMinimap ? "Hide Minimap" : "Show Minimap", action: () => setShowMinimap((p) => !p) },
+      { label: autoSave ? "Disable Auto Save" : "Enable Auto Save", action: () => setAutoSave((p) => !p) },
+      { label: "Open Preview in New Tab", action: openPreviewInNewTab },
+      { label: isDark ? "Light Theme" : "Dark Theme", action: () => setTheme((p) => (p === "dark" ? "light" : "dark")) },
     ],
     Run: [
-      { label: "Run All", action: runAll },
+      { label: "Run All (HTML+CSS+JS)", action: runAll },
       { label: "Run JS Only", action: () => void runJsOnly() },
       { label: "Run Node Command", action: () => void runNodeCommand(nodeCommand) },
     ],
@@ -835,322 +943,1121 @@ export default function App() {
 
   const renderEditorGroup = (groupId: GroupId) => {
     const group = groups[groupId];
-    const groupActiveId = group.activeId;
-    const groupFile = groupActiveId ? fileMap.get(groupActiveId) ?? null : null;
+    const gFile = group.activeId ? (fileMap.get(group.activeId) ?? null) : null;
+    const isActive = groupId === focusedGroup;
 
     return (
       <section
         key={groupId}
-        className={`flex min-w-0 flex-1 flex-col border-r ${isDark ? "border-[#2b2b2b]" : "border-slate-300"}`}
+        className="flex min-w-0 flex-1 flex-col"
+        style={{ borderRight: `1px solid ${isDark ? "#3c3c3c" : "#e5e5e5"}` }}
         onClick={() => setFocusedGroup(groupId)}
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={(event) => {
-          event.preventDefault();
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
           if (!draggedTab) return;
           moveTab(draggedTab.fromGroup, groupId, draggedTab.fileId);
           setDraggedTab(null);
         }}
       >
-        <div className={`flex h-9 items-end border-b px-1 ${isDark ? "border-[#2b2b2b] bg-[#1f1f1f]" : "border-slate-300 bg-slate-200"}`}>
-          <div className="flex min-w-0 flex-1 gap-1 overflow-auto text-xs">
-            {group.tabs.map((fileId, index) => {
-              const file = fileMap.get(fileId);
-              if (!file) return null;
-              const active = group.activeId === fileId;
-              return (
-                <div
-                  key={`${groupId}-${file.id}`}
-                  className={`flex items-center rounded-t border border-b-0 px-2 py-1 ${
-                    active
-                      ? isDark
-                        ? "border-[#2b2b2b] bg-[#252526]"
-                        : "border-slate-300 bg-white"
-                      : isDark
-                        ? "border-transparent bg-[#2d2d30] text-slate-300"
-                        : "border-transparent bg-slate-100 text-slate-600"
-                  }`}
-                  draggable
-                  onDragStart={() => setDraggedTab({ fileId: file.id, fromGroup: groupId })}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    if (!draggedTab) return;
-                    moveTab(draggedTab.fromGroup, groupId, draggedTab.fileId, index);
-                    setDraggedTab(null);
+        {/* Tab bar */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-end",
+            height: 36,
+            background: isDark ? "#2d2d30" : "#f3f3f3",
+            borderBottom: `1px solid ${isDark ? "#3c3c3c" : "#e5e5e5"}`,
+            paddingLeft: 4,
+            overflowX: "auto",
+            overflowY: "hidden",
+            scrollbarWidth: "none",
+          }}
+        >
+          {group.tabs.map((fileId, index) => {
+            const file = fileMap.get(fileId);
+            if (!file) return null;
+            const active = group.activeId === fileId;
+            const unsaved = isUnsaved(fileId);
+            return (
+              <div
+                key={`${groupId}-${file.id}`}
+                draggable
+                onDragStart={() => setDraggedTab({ fileId: file.id, fromGroup: groupId })}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (!draggedTab) return;
+                  moveTab(draggedTab.fromGroup, groupId, draggedTab.fileId, index);
+                  setDraggedTab(null);
+                }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  paddingLeft: 12,
+                  paddingRight: 8,
+                  paddingTop: 6,
+                  paddingBottom: 6,
+                  cursor: "pointer",
+                  fontSize: 13,
+                  whiteSpace: "nowrap",
+                  borderTop: active && isActive ? "1px solid #007acc" : "1px solid transparent",
+                  background: active ? (isDark ? "#1e1e1e" : "#ffffff") : "transparent",
+                  color: active ? (isDark ? "#cccccc" : "#333333") : (isDark ? "#858585" : "#6e6e6e"),
+                  position: "relative",
+                  userSelect: "none",
+                }}
+                onClick={() => openFileInGroup(file.id, groupId)}
+              >
+                <FileIcon language={file.language} />
+                <span style={{ maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {file.name}
+                </span>
+                {unsaved && (
+                  <span style={{ color: isDark ? "#cccccc" : "#333333", fontSize: 16, lineHeight: 1, marginLeft: -2, marginRight: -2 }}>
+                    ●
+                  </span>
+                )}
+                <button
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "inherit",
+                    cursor: "pointer",
+                    padding: 2,
+                    display: "flex",
+                    alignItems: "center",
+                    opacity: 0.6,
+                    borderRadius: 3,
                   }}
+                  onClick={(e) => { e.stopPropagation(); closeTab(groupId, file.id); }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = isDark ? "#555" : "#ddd"; (e.currentTarget as HTMLElement).style.opacity = "1"; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "none"; (e.currentTarget as HTMLElement).style.opacity = "0.6"; }}
                 >
-                  <button className="truncate text-left" onClick={() => openFileInGroup(file.id, groupId)}>
-                    {file.name}
-                  </button>
-                  <button className="ml-2 text-[10px] opacity-70 hover:opacity-100" onClick={() => closeTab(groupId, file.id)}>
-                    x
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+                  <X size={13} />
+                </button>
+              </div>
+            );
+          })}
         </div>
 
-        {groupFile ? (
+        {/* Breadcrumb */}
+        {gFile && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              height: 26,
+              paddingLeft: 12,
+              fontSize: 12,
+              background: isDark ? "#1e1e1e" : "#ffffff",
+              borderBottom: `1px solid ${isDark ? "#3c3c3c" : "#e5e5e5"}`,
+              color: isDark ? "#858585" : "#6e6e6e",
+            }}
+          >
+            <span>project</span>
+            <ChevronRight size={12} />
+            <FileIcon language={gFile.language} size={12} />
+            <span style={{ color: isDark ? "#cccccc" : "#333" }}>{gFile.name}</span>
+          </div>
+        )}
+
+        {gFile ? (
           <Editor
-            path={`${groupId}:${groupFile.name}`}
-            language={groupFile.language}
-            value={groupFile.content}
+            path={`${groupId}:${gFile.name}`}
+            language={gFile.language}
+            value={gFile.content}
             onMount={(editor) => {
               editorRefs.current[groupId] = editor;
+              editor.onDidChangeCursorPosition((e) => {
+                if (groupId === focusedGroup) {
+                  setCursorPos({ line: e.position.lineNumber, col: e.position.column });
+                }
+              });
             }}
             onValidate={(markers) => {
-              setMarkersByFile((prev) => ({ ...prev, [groupFile.id]: markers.length }));
+              setMarkersByFile((prev) => ({ ...prev, [gFile.id]: markers.length }));
             }}
-            onChange={(value) => updateFileContent(groupFile.id, value ?? "")}
+            onChange={(value) => updateFileContent(gFile.id, value ?? "")}
             theme={isDark ? "vs-dark" : "light"}
-            height="calc(100% - 2.25rem)"
+            height={`calc(100% - ${26 + 36}px)`}
             options={{
-              minimap: { enabled: false },
+              minimap: { enabled: showMinimap },
               fontSize: 14,
               lineNumbers: "on",
               automaticLayout: true,
               formatOnPaste: true,
-              formatOnType: true,
+              formatOnType: false,
               suggestOnTriggerCharacters: true,
-              wordWrap: "on",
+              wordWrap,
               autoClosingBrackets: "always",
               autoClosingQuotes: "always",
-              autoClosingDelete: "always",
-              quickSuggestions: { other: true, comments: true, strings: true },
+              quickSuggestions: { other: true, comments: false, strings: true },
+              tabSize: 2,
+              renderLineHighlight: "line",
+              smoothScrolling: true,
+              cursorBlinking: "smooth",
+              cursorSmoothCaretAnimation: "on",
+              bracketPairColorization: { enabled: true },
+              guides: { bracketPairs: true, indentation: true },
+              renderWhitespace: "selection",
+              scrollBeyondLastLine: false,
+              padding: { top: 8, bottom: 8 },
             }}
           />
         ) : (
-          <div className="grid h-[calc(100%-2.25rem)] place-items-center text-sm opacity-60">No open tab in this editor group</div>
+          <div
+            style={{
+              flex: 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: isDark ? "#1e1e1e" : "#ffffff",
+              color: isDark ? "#404040" : "#cccccc",
+              fontSize: 13,
+            }}
+          >
+            Open a file from the Explorer
+          </div>
         )}
       </section>
     );
   };
 
+  const colors = {
+    activityBar: isDark ? "#333333" : "#2c2c2c",
+    activityBarText: isDark ? "#858585" : "#aaaaaa",
+    activityBarActive: "#ffffff",
+    sidebar: isDark ? "#252526" : "#f3f3f3",
+    sidebarText: isDark ? "#cccccc" : "#333333",
+    sidebarMuted: isDark ? "#858585" : "#888888",
+    border: isDark ? "#3c3c3c" : "#e5e5e5",
+    editorBg: isDark ? "#1e1e1e" : "#ffffff",
+    panelBg: isDark ? "#1e1e1e" : "#f3f3f3",
+    panelHeader: isDark ? "#252526" : "#e8e8e8",
+    statusBar: "#007acc",
+    menuBar: isDark ? "#3c3c3c" : "#dddddd",
+    toolbarBg: isDark ? "#252526" : "#f3f3f3",
+  };
+
   return (
-    <div className={`h-screen overflow-hidden ${isDark ? "bg-[#1e1e1e] text-slate-200" : "bg-slate-100 text-slate-900"}`}>
-      <header className={`flex h-9 items-center justify-between border-b px-3 text-xs ${isDark ? "border-[#2b2b2b] bg-[#2d2d30]" : "border-slate-300 bg-slate-200"}`}>
-        <div className="flex items-center gap-2">
-          <span className="font-semibold tracking-wide">WebCode Studio</span>
+    <div
+      style={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden", background: colors.editorBg }}
+      onClick={() => { if (menuOpen) setMenuOpen(null); }}
+    >
+      {/* Menu bar */}
+      <div
+        style={{
+          height: 30,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          paddingLeft: 8,
+          paddingRight: 12,
+          fontSize: 13,
+          background: isDark ? "#3c3c3c" : "#dddddd",
+          borderBottom: `1px solid ${colors.border}`,
+          flexShrink: 0,
+          userSelect: "none",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 0 }}>
+          <span style={{ fontWeight: 700, fontSize: 12, marginRight: 12, color: isDark ? "#cccccc" : "#333" }}>
+            ⬛ WebCode Studio
+          </span>
           {(Object.keys(menuItems) as MenuKey[]).map((menu) => (
-            <div key={menu} className="relative">
+            <div key={menu} style={{ position: "relative" }}>
               <button
-                onClick={() => setMenuOpen((prev) => (prev === menu ? null : menu))}
-                className={`rounded px-2 py-1 ${menuOpen === menu ? (isDark ? "bg-[#3a3a3a]" : "bg-slate-300") : "hover:bg-black/10"}`}
+                style={{
+                  background: menuOpen === menu ? (isDark ? "#505050" : "#c0c0c0") : "none",
+                  border: "none",
+                  color: isDark ? "#cccccc" : "#333333",
+                  padding: "3px 8px",
+                  cursor: "pointer",
+                  fontSize: 13,
+                  borderRadius: 3,
+                }}
+                onClick={(e) => { e.stopPropagation(); setMenuOpen((p) => (p === menu ? null : menu)); }}
               >
                 {menu}
               </button>
-              {menuOpen === menu ? (
-                <div className={`absolute left-0 top-8 z-20 w-52 border text-xs shadow-lg ${isDark ? "border-[#2b2b2b] bg-[#252526]" : "border-slate-300 bg-white"}`}>
+              {menuOpen === menu && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: "100%",
+                    left: 0,
+                    zIndex: 100,
+                    minWidth: 220,
+                    background: isDark ? "#252526" : "#f5f5f5",
+                    border: `1px solid ${colors.border}`,
+                    boxShadow: "0 4px 16px rgba(0,0,0,0.4)",
+                    borderRadius: 4,
+                    paddingTop: 4,
+                    paddingBottom: 4,
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
                   {menuItems[menu].map((item) => (
                     <button
-                      key={`${menu}-${item.label}`}
-                      className="flex w-full items-center px-3 py-2 text-left hover:bg-black/10"
-                      onClick={() => {
-                        item.action();
-                        setMenuOpen(null);
+                      key={item.label}
+                      style={{
+                        width: "100%",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        padding: "5px 12px",
+                        background: "none",
+                        border: "none",
+                        color: isDark ? "#cccccc" : "#333333",
+                        cursor: "pointer",
+                        fontSize: 13,
+                        textAlign: "left",
                       }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = isDark ? "#094771" : "#0060c0"; (e.currentTarget as HTMLElement).style.color = "#fff"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "none"; (e.currentTarget as HTMLElement).style.color = isDark ? "#cccccc" : "#333333"; }}
+                      onClick={() => { item.action(); setMenuOpen(null); }}
                     >
-                      {item.label}
+                      <span>{item.label}</span>
+                      {item.shortcut && (
+                        <span style={{ fontSize: 11, opacity: 0.6, marginLeft: 24 }}>{item.shortcut}</span>
+                      )}
                     </button>
                   ))}
                 </div>
-              ) : null}
+              )}
             </div>
           ))}
         </div>
-
-        <div className="flex items-center gap-2">
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button
-            onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
-            className={`rounded border px-2 py-1 ${isDark ? "border-[#3a3a3a] hover:bg-[#3a3a3a]" : "border-slate-400 hover:bg-slate-100"}`}
+            onClick={() => setTheme((p) => (p === "dark" ? "light" : "dark"))}
+            style={{
+              background: "none",
+              border: `1px solid ${colors.border}`,
+              color: isDark ? "#cccccc" : "#333",
+              borderRadius: 4,
+              padding: "2px 8px",
+              cursor: "pointer",
+              fontSize: 12,
+            }}
           >
-            {isDark ? "Light" : "Dark"}
+            {isDark ? "☀ Light" : "● Dark"}
           </button>
         </div>
-      </header>
+      </div>
 
-      <div className="flex h-[calc(100vh-2.25rem)]" ref={workspaceRef}>
-        <aside className={`w-12 border-r ${isDark ? "border-[#2b2b2b] bg-[#333333]" : "border-slate-300 bg-slate-300"}`}>
-          <div className="flex h-full flex-col items-center gap-2 pt-2 text-[10px]">
-            <button className={`h-8 w-8 rounded ${isDark ? "bg-[#094771] text-white" : "bg-sky-600 text-white"}`} title="Explorer">
-              EX
-            </button>
-            <button className={`h-8 w-8 rounded ${isDark ? "hover:bg-[#424242]" : "hover:bg-slate-400"}`} title="Search">
-              SR
-            </button>
-            <button className={`h-8 w-8 rounded ${isDark ? "hover:bg-[#424242]" : "hover:bg-slate-400"}`} title="Run">
-              RN
-            </button>
-          </div>
-        </aside>
-
-        <section
-          className={`flex flex-col border-r text-xs ${isDark ? "border-[#2b2b2b] bg-[#252526]" : "border-slate-300 bg-slate-100"}`}
-          style={{ width: sidebarWidth }}
-        >
-          <div className={`flex h-9 items-center justify-between border-b px-3 font-medium uppercase tracking-widest ${isDark ? "border-[#2b2b2b]" : "border-slate-300"}`}>
-            <span>Explorer</span>
-            <button className="rounded px-1 hover:bg-black/10" onClick={createFile} title="New File">+</button>
-          </div>
-          <div className="overflow-auto">
-            {files.map((file) => {
-              const isActive = file.id === activeFileId;
-              return (
-                <div key={file.id} className={`group flex items-center justify-between px-2 py-1.5 ${isActive ? (isDark ? "bg-[#37373d]" : "bg-slate-200") : ""}`}>
-                  <button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => openFileInGroup(file.id, focusedGroup)}>
-                    <span className="text-[10px] opacity-60">{file.language === "html" ? "H" : file.language === "css" ? "C" : "J"}</span>
-                    <span className="truncate">{file.name}</span>
-                  </button>
-                  <div className="hidden gap-1 text-[10px] group-hover:flex">
-                    <button className="rounded px-1 hover:bg-black/10" onClick={() => renameFile(file.id)}>
-                      Ren
-                    </button>
-                    <button className="rounded px-1 hover:bg-black/10" onClick={() => deleteFile(file.id)}>
-                      Del
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-
+      {/* Main workspace */}
+      <div style={{ display: "flex", flex: 1, overflow: "hidden" }} ref={workspaceRef}>
+        {/* Activity bar */}
         <div
-          className={`w-1 cursor-col-resize ${isDark ? "bg-[#2b2b2b]" : "bg-slate-300"}`}
-          onMouseDown={(event) =>
-            setDrag({ type: "sidebar", startX: event.clientX, startY: event.clientY, startValue: sidebarWidth })
-          }
-        />
+          style={{
+            width: 48,
+            background: colors.activityBar,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            paddingTop: 8,
+            gap: 4,
+            flexShrink: 0,
+            borderRight: `1px solid ${isDark ? "#222" : "#bbb"}`,
+          }}
+        >
+          {(
+            [
+              { id: "explorer" as ActivityId, icon: <Files size={24} />, label: "Explorer" },
+              { id: "search" as ActivityId, icon: <Search size={24} />, label: "Search" },
+              { id: "git" as ActivityId, icon: <GitBranch size={24} />, label: "Source Control" },
+            ] as const
+          ).map(({ id, icon, label }) => (
+            <button
+              key={id}
+              title={label}
+              onClick={() => setActivityId(id)}
+              style={{
+                background: "none",
+                border: "none",
+                color: activityId === id ? colors.activityBarActive : colors.activityBarText,
+                borderLeft: activityId === id ? "2px solid #fff" : "2px solid transparent",
+                padding: "8px 0",
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+              }}
+            >
+              {icon}
+            </button>
+          ))}
+          <div style={{ flex: 1 }} />
+          <button
+            title="Settings"
+            style={{
+              background: "none",
+              border: "none",
+              color: colors.activityBarText,
+              padding: "8px 0",
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              marginBottom: 4,
+            }}
+          >
+            <Settings size={24} />
+          </button>
+        </div>
 
-        <main className="flex min-w-0 flex-1 flex-col">
-          <div className={`flex h-10 items-center justify-between gap-2 border-b px-2 text-xs ${isDark ? "border-[#2b2b2b] bg-[#252526]" : "border-slate-300 bg-slate-100"}`}>
-            <div className="flex items-center gap-1">
-              <button className="rounded border px-2 py-1" onClick={formatActive}>Format</button>
-              <button className="rounded border px-2 py-1" onClick={saveProject}>Save</button>
-              <button className="rounded border px-2 py-1" onClick={loadProject}>Load</button>
-              <button className="rounded border px-2 py-1" onClick={() => void downloadProject()}>ZIP</button>
-              <button className="rounded border px-2 py-1" onClick={splitActiveTab}>Split</button>
-            </div>
-            <div className="flex items-center gap-1">
-              <button className="rounded border px-2 py-1" onClick={runAll}>Run All</button>
-              <button className="rounded border px-2 py-1" onClick={() => void runJsOnly()} disabled={isRunningJsOnly}>
-                {isRunningJsOnly ? "Running JS..." : "Run JS Only"}
+        {/* Sidebar */}
+        <div
+          style={{
+            width: sidebarWidth,
+            background: colors.sidebar,
+            display: "flex",
+            flexDirection: "column",
+            borderRight: `1px solid ${colors.border}`,
+            flexShrink: 0,
+            overflow: "hidden",
+          }}
+        >
+          {/* Sidebar header */}
+          <div
+            style={{
+              height: 35,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              paddingLeft: 12,
+              paddingRight: 8,
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: "0.1em",
+              color: colors.sidebarMuted,
+              textTransform: "uppercase",
+              borderBottom: `1px solid ${colors.border}`,
+              flexShrink: 0,
+            }}
+          >
+            {activityId === "explorer" && "Explorer"}
+            {activityId === "search" && "Search"}
+            {activityId === "git" && "Source Control"}
+            {activityId === "explorer" && (
+              <button
+                title="New File (Ctrl+N)"
+                onClick={createFile}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: colors.sidebarMuted,
+                  cursor: "pointer",
+                  padding: 4,
+                  borderRadius: 3,
+                  display: "flex",
+                  alignItems: "center",
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = colors.sidebarText; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = colors.sidebarMuted; }}
+              >
+                <Plus size={16} />
               </button>
-              <input
-                value={nodeCommand}
-                onChange={(event) => setNodeCommand(event.target.value)}
-                className={`w-48 rounded border px-2 py-1 ${isDark ? "border-[#3a3a3a] bg-[#1e1e1e]" : "border-slate-300 bg-white"}`}
-                placeholder="node script.js"
-              />
-              <button className="rounded border px-2 py-1" onClick={() => void runNodeCommand(nodeCommand)} disabled={isRunningCommand}>
-                {isRunningCommand ? "Running..." : "Run Node Cmd"}
-              </button>
-              <button className="rounded border px-2 py-1" onClick={openPreviewInNewTab}>Open Preview</button>
-            </div>
+            )}
           </div>
 
-          <div className="min-h-0 flex-1" style={{ height: `calc(100% - ${isTerminalOpen ? consoleHeight : 0}px)` }} ref={topPanelRef}>
-            <div className="flex h-full min-h-0">
-              <section className="flex min-w-0" style={{ width: `${editorWidthPercent}%` }}>
-                {renderEditorGroup("primary")}
-                {groups.secondary.tabs.length > 0 || groups.secondary.activeId ? renderEditorGroup("secondary") : null}
-              </section>
-
-              <div
-                className={`w-1 cursor-col-resize ${isDark ? "bg-[#2b2b2b]" : "bg-slate-300"}`}
-                onMouseDown={(event) =>
-                  setDrag({ type: "preview", startX: event.clientX, startY: event.clientY, startValue: editorWidthPercent })
-                }
-              />
-
-              <section className={`min-w-0 flex-1 ${isDark ? "bg-[#1e1e1e]" : "bg-white"}`}>
-                <div className={`flex h-9 items-center justify-between border-b px-3 text-xs font-medium tracking-wide ${isDark ? "border-[#2b2b2b] bg-[#252526]" : "border-slate-300 bg-slate-100"}`}>
-                  <span>PREVIEW</span>
-                  <button className="rounded border px-2 py-1" onClick={openPreviewInNewTab}>Open In Tab</button>
-                </div>
-                <iframe title="preview" srcDoc={previewDoc} className="h-[calc(100%-2.25rem)] w-full bg-white" sandbox="allow-scripts" />
-              </section>
-            </div>
-          </div>
-
-          {isTerminalOpen ? (
+          {/* Explorer content */}
+          {activityId === "explorer" && (
             <>
               <div
-                className={`h-1 cursor-row-resize ${isDark ? "bg-[#2b2b2b]" : "bg-slate-300"}`}
-                onMouseDown={(event) =>
-                  setDrag({ type: "console", startX: event.clientX, startY: event.clientY, startValue: consoleHeight })
-                }
-              />
-
-              <section className={`${isDark ? "border-t border-[#2b2b2b] bg-[#181818]" : "border-t border-slate-300 bg-slate-50"}`} style={{ height: consoleHeight }}>
-                <div className={`flex h-9 items-center justify-between border-b px-3 text-xs ${isDark ? "border-[#2b2b2b]" : "border-slate-300"}`}>
-                  <div className="flex items-center gap-3">
-                    <span>TERMINAL</span>
-                    <span className="opacity-60">Type commands: node script.js, run all, run js, clear</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <button className="rounded border px-2 py-1 text-[10px]" onClick={() => setConsoleEntries([])}>Clear</button>
-                    <button className="rounded border px-2 py-1 text-[10px]" onClick={() => setIsTerminalOpen(false)}>Close</button>
-                  </div>
-                </div>
-
-                <div className="h-[calc(100%-4.5rem)] overflow-auto p-3 font-mono text-xs leading-5">
-                  {consoleEntries.length === 0 ? (
-                    <div className="opacity-60">Run code to view logs, warnings, and errors.</div>
-                  ) : (
-                    consoleEntries.map((entry) => (
-                      <div
-                        key={entry.id}
-                        className={`${
-                          entry.level === "error"
-                            ? "text-rose-400"
-                            : entry.level === "warn"
-                              ? "text-amber-400"
-                              : entry.level === "system"
-                                ? "text-sky-400"
-                                : ""
-                        }`}
-                      >
-                        [{entry.level}] {entry.message}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  paddingLeft: 12,
+                  paddingRight: 8,
+                  height: 28,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  letterSpacing: "0.05em",
+                  color: colors.sidebarMuted,
+                  textTransform: "uppercase",
+                  flexShrink: 0,
+                }}
+              >
+                <FolderOpen size={14} />
+                <span>Project</span>
+              </div>
+              <div style={{ overflowY: "auto", flex: 1 }}>
+                {files.map((file) => {
+                  const isActive = file.id === activeFileId;
+                  const unsaved = isUnsaved(file.id);
+                  return (
+                    <div
+                      key={file.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        paddingLeft: 20,
+                        paddingRight: 6,
+                        height: 28,
+                        cursor: "pointer",
+                        background: isActive ? (isDark ? "#094771" : "#cce4f7") : "transparent",
+                        color: isActive ? (isDark ? "#ffffff" : "#000000") : colors.sidebarText,
+                        fontSize: 13,
+                      }}
+                      onClick={() => openFileInGroup(file.id, focusedGroup)}
+                      onMouseEnter={(e) => {
+                        if (!isActive) (e.currentTarget as HTMLElement).style.background = isDark ? "#2a2d2e" : "#e8e8e8";
+                        const btns = (e.currentTarget as HTMLElement).querySelectorAll("button");
+                        btns.forEach((b) => { (b as HTMLElement).style.display = "flex"; });
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isActive) (e.currentTarget as HTMLElement).style.background = "transparent";
+                        const btns = (e.currentTarget as HTMLElement).querySelectorAll("button");
+                        btns.forEach((b) => { (b as HTMLElement).style.display = "none"; });
+                      }}
+                    >
+                      <span style={{ marginRight: 6, flexShrink: 0 }}>
+                        <FileIcon language={file.language} />
+                      </span>
+                      <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {file.name}
+                        {unsaved && <span style={{ marginLeft: 4, color: isDark ? "#e2a85a" : "#e07000" }}>●</span>}
+                      </span>
+                      <div style={{ display: "flex", gap: 2, marginLeft: 4 }}>
+                        {[
+                          { label: "Rename", action: () => renameFile(file.id), char: "✎" },
+                          { label: "Delete", action: () => deleteFile(file.id), char: "✕" },
+                        ].map(({ label, action, char }) => (
+                          <button
+                            key={label}
+                            title={label}
+                            onClick={(e) => { e.stopPropagation(); action(); }}
+                            style={{
+                              display: "none",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              background: "none",
+                              border: "none",
+                              color: colors.sidebarMuted,
+                              cursor: "pointer",
+                              fontSize: 12,
+                              padding: "2px 4px",
+                              borderRadius: 3,
+                            }}
+                            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = isDark ? "#555" : "#ccc"; }}
+                            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "none"; }}
+                          >
+                            {char}
+                          </button>
+                        ))}
                       </div>
-                    ))
-                  )}
-                </div>
-
-                <form
-                  className={`flex h-9 items-center gap-2 border-t px-2 ${isDark ? "border-[#2b2b2b]" : "border-slate-300"}`}
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void executeTerminalCommand(terminalInput);
-                    setTerminalInput("");
-                  }}
-                >
-                  <span className="font-mono text-xs opacity-70">$</span>
-                  <input
-                    value={terminalInput}
-                    onChange={(event) => setTerminalInput(event.target.value)}
-                    className={`h-7 flex-1 rounded border px-2 text-xs ${isDark ? "border-[#3a3a3a] bg-[#1e1e1e]" : "border-slate-300 bg-white"}`}
-                    placeholder="node script.js"
-                  />
-                  <button className="rounded border px-2 py-1 text-xs">Run</button>
-                </form>
-              </section>
+                    </div>
+                  );
+                })}
+              </div>
             </>
-          ) : (
-            <div className={`border-t px-2 py-1 text-xs ${isDark ? "border-[#2b2b2b] bg-[#1b1b1b]" : "border-slate-300 bg-slate-100"}`}>
-              <button className="rounded border px-2 py-1" onClick={() => setIsTerminalOpen(true)}>
-                Open Terminal
-              </button>
+          )}
+
+          {/* Search content */}
+          {activityId === "search" && (
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+              <div style={{ padding: "8px 12px" }}>
+                <input
+                  type="text"
+                  placeholder="Search in files..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "5px 8px",
+                    background: isDark ? "#3c3c3c" : "#ffffff",
+                    border: `1px solid ${isDark ? "#555" : "#ccc"}`,
+                    borderRadius: 3,
+                    color: isDark ? "#cccccc" : "#333",
+                    fontSize: 13,
+                    outline: "none",
+                  }}
+                />
+              </div>
+              <div style={{ flex: 1, overflowY: "auto", fontSize: 12 }}>
+                {searchQuery.trim() === "" && (
+                  <div style={{ padding: "8px 12px", color: colors.sidebarMuted }}>
+                    Type to search across all files.
+                  </div>
+                )}
+                {searchResults.map(({ file, lines }) => (
+                  <div key={file.id}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "4px 12px",
+                        color: colors.sidebarText,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                      onClick={() => openFileInGroup(file.id, focusedGroup)}
+                    >
+                      <FileIcon language={file.language} size={12} />
+                      {file.name}
+                      <span style={{ color: colors.sidebarMuted, fontWeight: 400, marginLeft: "auto" }}>
+                        {lines.length}
+                      </span>
+                    </div>
+                    {lines.slice(0, 5).map(({ lineNum, text }) => (
+                      <div
+                        key={lineNum}
+                        style={{
+                          paddingLeft: 28,
+                          paddingRight: 12,
+                          paddingTop: 2,
+                          paddingBottom: 2,
+                          color: colors.sidebarMuted,
+                          fontFamily: "monospace",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          cursor: "pointer",
+                        }}
+                        onClick={() => openFileInGroup(file.id, focusedGroup)}
+                      >
+                        <span style={{ color: isDark ? "#5a9bcf" : "#0070d5", marginRight: 8 }}>{lineNum}</span>
+                        {text.trim()}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
-          <footer className={`flex h-6 items-center justify-between px-3 text-[10px] ${isDark ? "bg-[#007acc] text-white" : "bg-sky-600 text-white"}`}>
-            <span>File: {activeFile?.name ?? "None"}</span>
-            <span>Problems: {markerCount}</span>
-            <span>API: {ENV_API_BASE || "same-origin"}</span>
-          </footer>
+          {activityId === "git" && (
+            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.sidebarMuted, fontSize: 13, padding: 16, textAlign: "center" }}>
+              <div>
+                <GitBranch size={32} style={{ marginBottom: 8, opacity: 0.5 }} />
+                <p>Source control is not available in the browser environment.</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Sidebar resize handle */}
+        <div
+          style={{
+            width: 4,
+            cursor: "col-resize",
+            background: "transparent",
+            flexShrink: 0,
+          }}
+          onMouseDown={(e) =>
+            setDrag({ type: "sidebar", startX: e.clientX, startY: e.clientY, startValue: sidebarWidth })
+          }
+          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#007acc55"; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+        />
+
+        {/* Main editor area */}
+        <main style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden", minWidth: 0 }}>
+          {/* Action toolbar */}
+          <div
+            style={{
+              height: 36,
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              padding: "0 8px",
+              background: colors.toolbarBg,
+              borderBottom: `1px solid ${colors.border}`,
+              flexShrink: 0,
+              fontSize: 12,
+            }}
+          >
+            {[
+              { icon: <Play size={13} />, label: "Run All", action: runAll, primary: true },
+              { icon: isRunningJsOnly ? <Square size={13} /> : <FileCode2 size={13} />, label: isRunningJsOnly ? "Running…" : "Run JS", action: () => void runJsOnly(), disabled: isRunningJsOnly },
+              { icon: <Braces size={13} />, label: "Format", action: formatActive },
+              { icon: <Save size={13} />, label: "Save", action: saveProject, shortcut: "Ctrl+S" },
+              { icon: <Download size={13} />, label: "ZIP", action: () => void downloadProject() },
+              { icon: <Columns2 size={13} />, label: "Split", action: splitActiveTab },
+              { icon: <RefreshCw size={13} />, label: "Load", action: loadProject },
+              { icon: <ExternalLink size={13} />, label: "Preview", action: openPreviewInNewTab },
+            ].map(({ icon, label, action, primary, disabled }) => (
+              <button
+                key={label}
+                title={label}
+                onClick={action}
+                disabled={disabled}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  padding: "4px 8px",
+                  background: primary ? "#007acc" : "transparent",
+                  border: primary ? "none" : `1px solid ${colors.border}`,
+                  borderRadius: 4,
+                  color: primary ? "#ffffff" : (isDark ? "#cccccc" : "#333333"),
+                  cursor: disabled ? "not-allowed" : "pointer",
+                  fontSize: 12,
+                  opacity: disabled ? 0.5 : 1,
+                  whiteSpace: "nowrap",
+                }}
+                onMouseEnter={(e) => {
+                  if (!primary && !disabled) (e.currentTarget as HTMLElement).style.background = isDark ? "#3a3a3a" : "#e0e0e0";
+                }}
+                onMouseLeave={(e) => {
+                  if (!primary) (e.currentTarget as HTMLElement).style.background = "transparent";
+                }}
+              >
+                {icon}
+                <span>{label}</span>
+              </button>
+            ))}
+            <div style={{ flex: 1 }} />
+            {/* Node command input */}
+            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              <span style={{ color: colors.sidebarMuted, fontSize: 11 }}>$</span>
+              <input
+                value={nodeCommand}
+                onChange={(e) => setNodeCommand(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") void runNodeCommand(nodeCommand); }}
+                placeholder="node script.js"
+                style={{
+                  width: 160,
+                  padding: "3px 8px",
+                  background: isDark ? "#3c3c3c" : "#ffffff",
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: 4,
+                  color: isDark ? "#cccccc" : "#333",
+                  fontSize: 12,
+                  fontFamily: "monospace",
+                  outline: "none",
+                }}
+              />
+              <button
+                onClick={() => void runNodeCommand(nodeCommand)}
+                disabled={isRunningCommand}
+                style={{
+                  padding: "3px 8px",
+                  background: "transparent",
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: 4,
+                  color: isDark ? "#cccccc" : "#333",
+                  cursor: isRunningCommand ? "not-allowed" : "pointer",
+                  fontSize: 12,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {isRunningCommand ? "Running…" : "Run Node"}
+              </button>
+            </div>
+          </div>
+
+          {/* Editor + Preview */}
+          <div
+            style={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}
+            ref={topPanelRef}
+          >
+            {/* Editor groups */}
+            <div
+              style={{
+                display: "flex",
+                minWidth: 0,
+                width: `${editorWidthPercent}%`,
+              }}
+            >
+              {renderEditorGroup("primary")}
+              {(groups.secondary.tabs.length > 0 || groups.secondary.activeId)
+                ? renderEditorGroup("secondary")
+                : null}
+            </div>
+
+            {/* Editor/Preview resize handle */}
+            <div
+              style={{ width: 4, cursor: "col-resize", background: "transparent", flexShrink: 0 }}
+              onMouseDown={(e) =>
+                setDrag({ type: "preview", startX: e.clientX, startY: e.clientY, startValue: editorWidthPercent })
+              }
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#007acc55"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+            />
+
+            {/* Preview */}
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, background: isDark ? "#1e1e1e" : "#ffffff" }}>
+              <div
+                style={{
+                  height: 35,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  paddingLeft: 12,
+                  paddingRight: 8,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                  color: colors.sidebarMuted,
+                  borderBottom: `1px solid ${colors.border}`,
+                  background: colors.toolbarBg,
+                }}
+              >
+                <span>Preview</span>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <button
+                    onClick={runAll}
+                    title="Run All"
+                    style={{
+                      background: "#007acc",
+                      border: "none",
+                      borderRadius: 3,
+                      color: "#fff",
+                      padding: "2px 8px",
+                      cursor: "pointer",
+                      fontSize: 11,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                  >
+                    <Play size={11} /> Run
+                  </button>
+                  <button
+                    onClick={openPreviewInNewTab}
+                    style={{
+                      background: "none",
+                      border: `1px solid ${colors.border}`,
+                      borderRadius: 3,
+                      color: colors.sidebarMuted,
+                      padding: "2px 6px",
+                      cursor: "pointer",
+                      fontSize: 11,
+                      display: "flex",
+                      alignItems: "center",
+                    }}
+                  >
+                    <ExternalLink size={11} />
+                  </button>
+                </div>
+              </div>
+              <iframe
+                title="preview"
+                srcDoc={previewDoc}
+                style={{ flex: 1, width: "100%", border: "none", background: "#fff" }}
+                sandbox="allow-scripts allow-same-origin"
+              />
+            </div>
+          </div>
+
+          {/* Panel resize handle */}
+          {isPanelOpen && (
+            <div
+              style={{ height: 4, cursor: "row-resize", background: "transparent", flexShrink: 0 }}
+              onMouseDown={(e) =>
+                setDrag({ type: "panel", startX: e.clientX, startY: e.clientY, startValue: panelHeight })
+              }
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#007acc55"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+            />
+          )}
+
+          {/* Panel (Terminal / Problems) */}
+          {isPanelOpen && (
+            <div
+              style={{
+                height: panelHeight,
+                display: "flex",
+                flexDirection: "column",
+                background: colors.panelBg,
+                borderTop: `1px solid ${colors.border}`,
+                flexShrink: 0,
+              }}
+            >
+              {/* Panel tabs */}
+              <div
+                style={{
+                  height: 35,
+                  display: "flex",
+                  alignItems: "stretch",
+                  background: colors.panelHeader,
+                  borderBottom: `1px solid ${colors.border}`,
+                  paddingLeft: 8,
+                  justifyContent: "space-between",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "stretch" }}>
+                  {(
+                    [
+                      { id: "terminal" as PanelTab, label: "Terminal", icon: <TerminalSquare size={13} /> },
+                      {
+                        id: "problems" as PanelTab,
+                        label: `Problems ${totalMarkers > 0 ? `(${totalMarkers})` : ""}`,
+                        icon: <AlertCircle size={13} />,
+                      },
+                    ] as const
+                  ).map(({ id, label, icon }) => (
+                    <button
+                      key={id}
+                      onClick={() => setPanelTab(id)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 5,
+                        paddingLeft: 12,
+                        paddingRight: 12,
+                        background: "none",
+                        border: "none",
+                        borderBottom: panelTab === id ? "1px solid #007acc" : "1px solid transparent",
+                        color: panelTab === id ? (isDark ? "#cccccc" : "#333333") : colors.sidebarMuted,
+                        cursor: "pointer",
+                        fontSize: 12,
+                        fontWeight: panelTab === id ? 600 : 400,
+                      }}
+                    >
+                      {icon}
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 4, paddingRight: 8 }}>
+                  <button
+                    onClick={() => setConsoleEntries([])}
+                    title="Clear"
+                    style={{ background: "none", border: "none", color: colors.sidebarMuted, cursor: "pointer", fontSize: 11, padding: "2px 6px", borderRadius: 3 }}
+                  >
+                    Clear
+                  </button>
+                  <button
+                    onClick={() => setIsPanelOpenRaw(false)}
+                    title="Close Panel"
+                    style={{ background: "none", border: "none", color: colors.sidebarMuted, cursor: "pointer", padding: 3, borderRadius: 3, display: "flex" }}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Terminal content */}
+              {panelTab === "terminal" && (
+                <>
+                  <div
+                    style={{
+                      flex: 1,
+                      overflowY: "auto",
+                      padding: "6px 12px",
+                      fontFamily: "Consolas, 'Courier New', monospace",
+                      fontSize: 13,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {consoleEntries.length === 0 && (
+                      <div style={{ color: colors.sidebarMuted }}>
+                        Output from your code will appear here.
+                        <br />
+                        Type <code style={{ background: isDark ? "#333" : "#eee", padding: "0 4px", borderRadius: 2 }}>help</code> for available commands.
+                      </div>
+                    )}
+                    {consoleEntries.map((entry) => (
+                      <div
+                        key={entry.id}
+                        style={{
+                          color:
+                            entry.level === "error"
+                              ? "#f48771"
+                              : entry.level === "warn"
+                                ? "#cca700"
+                                : entry.level === "system"
+                                  ? "#4ec9b0"
+                                  : isDark
+                                    ? "#d4d4d4"
+                                    : "#333333",
+                          display: "flex",
+                          gap: 8,
+                          alignItems: "flex-start",
+                        }}
+                      >
+                        <span style={{ opacity: 0.5, flexShrink: 0, fontSize: 11, paddingTop: 1 }}>
+                          {entry.level === "error" ? "✕" : entry.level === "warn" ? "⚠" : entry.level === "system" ? "›" : "○"}
+                        </span>
+                        <span style={{ wordBreak: "break-all" }}>{entry.message}</span>
+                      </div>
+                    ))}
+                    <div ref={consoleEndRef} />
+                  </div>
+                  <form
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "4px 12px",
+                      borderTop: `1px solid ${colors.border}`,
+                      flexShrink: 0,
+                    }}
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void executeTerminalCommand(terminalInput);
+                      setTerminalInput("");
+                    }}
+                  >
+                    <span style={{ color: "#4ec9b0", fontFamily: "monospace", fontSize: 13 }}>›</span>
+                    <input
+                      value={terminalInput}
+                      onChange={(e) => setTerminalInput(e.target.value)}
+                      placeholder="node script.js  |  run all  |  run js  |  clear  |  help"
+                      style={{
+                        flex: 1,
+                        background: "transparent",
+                        border: "none",
+                        outline: "none",
+                        color: isDark ? "#cccccc" : "#333333",
+                        fontFamily: "Consolas, 'Courier New', monospace",
+                        fontSize: 13,
+                      }}
+                    />
+                    <button
+                      type="submit"
+                      style={{
+                        background: "none",
+                        border: `1px solid ${colors.border}`,
+                        borderRadius: 3,
+                        color: colors.sidebarMuted,
+                        cursor: "pointer",
+                        padding: "2px 8px",
+                        fontSize: 12,
+                      }}
+                    >
+                      Run
+                    </button>
+                  </form>
+                </>
+              )}
+
+              {/* Problems content */}
+              {panelTab === "problems" && (
+                <div style={{ flex: 1, overflowY: "auto", fontSize: 12 }}>
+                  {totalMarkers === 0 ? (
+                    <div style={{ padding: 16, color: colors.sidebarMuted }}>
+                      ✓ No problems detected in the workspace.
+                    </div>
+                  ) : (
+                    files.map((file) => {
+                      const count = markersByFile[file.id] ?? 0;
+                      if (!count) return null;
+                      return (
+                        <div key={file.id}>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              padding: "5px 12px",
+                              color: colors.sidebarText,
+                              fontWeight: 600,
+                              cursor: "pointer",
+                            }}
+                            onClick={() => openFileInGroup(file.id, focusedGroup)}
+                          >
+                            <FileIcon language={file.language} size={12} />
+                            {file.name}
+                            <span style={{ color: "#f48771", marginLeft: "auto" }}>{count} error{count !== 1 ? "s" : ""}</span>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!isPanelOpen && (
+            <div
+              style={{
+                height: 22,
+                display: "flex",
+                alignItems: "center",
+                paddingLeft: 8,
+                borderTop: `1px solid ${colors.border}`,
+                flexShrink: 0,
+              }}
+            >
+              <button
+                onClick={() => setIsPanelOpenRaw(true)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: colors.sidebarMuted,
+                  cursor: "pointer",
+                  fontSize: 11,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                }}
+              >
+                <TerminalSquare size={12} /> Terminal (Ctrl+`)
+              </button>
+            </div>
+          )}
         </main>
+      </div>
+
+      {/* Status bar */}
+      <div
+        style={{
+          height: 24,
+          background: colors.statusBar,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          paddingLeft: 8,
+          paddingRight: 8,
+          fontSize: 12,
+          color: "#ffffff",
+          flexShrink: 0,
+          userSelect: "none",
+        }}
+      >
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <span>
+            {activeFile ? (
+              <>
+                <FileIcon language={activeFile.language} size={11} />
+                <span style={{ marginLeft: 5 }}>{activeFile.name}</span>
+              </>
+            ) : (
+              "No file open"
+            )}
+          </span>
+          {totalMarkers > 0 && (
+            <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <AlertCircle size={12} />
+              {totalMarkers} problem{totalMarkers !== 1 ? "s" : ""}
+            </span>
+          )}
+          {autoSave && <span style={{ opacity: 0.7 }}>Auto Save</span>}
+        </div>
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <span>Ln {cursorPos.line}, Col {cursorPos.col}</span>
+          <span>{activeFile ? LANG_LABEL[activeFile.language] : ""}</span>
+          <span>Spaces: 2</span>
+          <span
+            onClick={() => setWordWrap((p) => (p === "on" ? "off" : "on"))}
+            style={{ cursor: "pointer", opacity: wordWrap === "on" ? 1 : 0.5 }}
+            title="Toggle Word Wrap"
+          >
+            <WrapText size={12} />
+          </span>
+          <span
+            onClick={() => setShowMinimap((p) => !p)}
+            style={{ cursor: "pointer", opacity: showMinimap ? 1 : 0.5 }}
+            title="Toggle Minimap"
+          >
+            <MapIcon size={12} />
+          </span>
+          <span>UTF-8</span>
+        </div>
       </div>
     </div>
   );
