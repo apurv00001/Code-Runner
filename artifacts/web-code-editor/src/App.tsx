@@ -332,6 +332,9 @@ const resolveApiCandidates = () => {
 
 const emptyGroup = (): EditorGroupState => ({ tabs: [], activeId: null });
 
+const BROWSER_API_RE =
+  /\b(document|window\.location|window\.history|navigator\b|localStorage|sessionStorage|XMLHttpRequest|addEventListener\s*\(|removeEventListener\s*\(|querySelector|getElementById|innerHTML|createElement)\b/;
+
 export default function App() {
   const initialFiles = useMemo(() => seedFiles(), []);
   const [files, setFiles] = useState<ProjectFile[]>(initialFiles);
@@ -481,6 +484,93 @@ export default function App() {
     moveTab(focusedGroup, target, cur.activeId);
   }, [focusedGroup, groups, moveTab]);
 
+  const runJsInBrowserIframe = useCallback(
+    (code: string): Promise<void> => {
+      return new Promise((resolve) => {
+        const iframe = document.createElement("iframe");
+        iframe.setAttribute(
+          "sandbox",
+          "allow-scripts allow-same-origin"
+        );
+        Object.assign(iframe.style, {
+          position: "fixed",
+          opacity: "0",
+          pointerEvents: "none",
+          width: "1px",
+          height: "1px",
+          left: "-9999px",
+          top: "-9999px",
+        });
+        document.body.appendChild(iframe);
+
+        let done = false;
+        const cleanup = () => {
+          if (!done) {
+            done = true;
+            window.removeEventListener("message", onMsg);
+            clearTimeout(timer);
+            if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+            resolve();
+          }
+        };
+
+        const timer = setTimeout(() => {
+          appendSystem("Script timed out after 10 s.");
+          cleanup();
+        }, 10000);
+
+        const onMsg = (e: MessageEvent) => {
+          if (e.data?.source !== "iframe-js-runner") return;
+          if (e.data.type === "log") {
+            const lv: ConsoleLevel =
+              e.data.level === "warn"
+                ? "warn"
+                : e.data.level === "error"
+                  ? "error"
+                  : "log";
+            appendConsole(lv, String(e.data.message ?? ""));
+          } else if (e.data.type === "done") {
+            cleanup();
+          }
+        };
+        window.addEventListener("message", onMsg);
+
+        const escaped = code
+          .replace(/\\/g, "\\\\")
+          .replace(/`/g, "\\`")
+          .replace(/<\/script>/gi, "<\\/script>");
+
+        const html = `<!doctype html><html><body><script>
+(function(){
+  var send = function(level,msg){
+    try{ parent.postMessage({source:'iframe-js-runner',type:'log',level:level,message:msg},'*'); }catch(e){}
+  };
+  var _c = {
+    log: function(){send('log', Array.prototype.slice.call(arguments).map(function(a){return typeof a==='string'?a:JSON.stringify(a);}).join(' '));},
+    warn: function(){send('warn', Array.prototype.slice.call(arguments).map(function(a){return typeof a==='string'?a:JSON.stringify(a);}).join(' '));},
+    error: function(){send('error', Array.prototype.slice.call(arguments).map(function(a){return typeof a==='string'?a:JSON.stringify(a);}).join(' '));}
+  };
+  console.log = _c.log; console.warn = _c.warn; console.error = _c.error;
+  window.addEventListener('error', function(e){ send('error', e.message); parent.postMessage({source:'iframe-js-runner',type:'done'},'*'); });
+  try{
+    (function(console){ ${escaped} })(_c);
+  }catch(e){
+    send('error', e && e.message ? e.message : String(e));
+  }
+  parent.postMessage({source:'iframe-js-runner',type:'done'},'*');
+})();
+<\/script></body></html>`;
+
+        const doc = iframe.contentDocument;
+        if (!doc) { cleanup(); return; }
+        doc.open();
+        doc.write(html);
+        doc.close();
+      });
+    },
+    [appendConsole, appendSystem]
+  );
+
   const runNodeCommandInBrowser = useCallback(
     (command: string) => {
       const parts = command.trim().split(/\s+/).filter(Boolean);
@@ -495,6 +585,14 @@ export default function App() {
       );
       if (!jsFiles.has(fileName)) {
         appendConsole("error", `File not found: ${fileName}`);
+        return;
+      }
+      const src = jsFiles.get(fileName) ?? "";
+      if (BROWSER_API_RE.test(src)) {
+        appendConsole(
+          "warn",
+          `${fileName} uses browser APIs (document, window, etc.) which are not available in Node.js.\n  → Use "Run All" to run it in the browser preview, or rewrite it without DOM calls.`
+        );
         return;
       }
       appendSystem("Backend unavailable — running in browser Node-like runtime.");
@@ -571,34 +669,42 @@ export default function App() {
         ? activeFile
         : files.find((f) => f.language === "javascript");
     if (!jsFile) { appendSystem("No JavaScript file found."); return; }
+
+    const usesBrowserApis = BROWSER_API_RE.test(jsFile.content);
     setIsRunningJsOnly(true);
-    appendSystem(`▶ Run JS: ${jsFile.name}`);
+    appendSystem(`▶ Run JS: ${jsFile.name}${usesBrowserApis ? " (browser mode)" : ""}`);
+
+    if (usesBrowserApis) {
+      appendSystem(
+        "File uses browser APIs — running in isolated browser iframe.\n  Note: DOM elements from index.html are not available here. Use 'Run All' to see DOM interactions."
+      );
+      await runJsInBrowserIframe(jsFile.content);
+      setIsRunningJsOnly(false);
+      return;
+    }
+
     try {
       const payload = await callRunnerApi("/api/run-js", { code: jsFile.content });
       (payload.logs ?? []).forEach((entry) => {
         const lv = entry.level === "warn" || entry.level === "error" ? entry.level : "log";
         appendConsole(lv, entry.level === "result" ? `↩ ${entry.message}` : entry.message);
       });
-      if (!payload.ok) appendConsole("error", payload.error ?? "Execution failed.");
-    } catch {
-      appendSystem("Backend unavailable — using browser fallback.");
-      try {
-        const runner = new Function(
-          "console",
-          `"use strict";\n${jsFile.content}`
-        );
-        runner({
-          log: (...a: unknown[]) => appendConsole("log", a.map(String).join(" ")),
-          warn: (...a: unknown[]) => appendConsole("warn", a.map(String).join(" ")),
-          error: (...a: unknown[]) => appendConsole("error", a.map(String).join(" ")),
-        });
-      } catch (e) {
-        appendConsole("error", e instanceof Error ? e.message : "Error");
+      if (!payload.ok) {
+        const errMsg = payload.error ?? "Execution failed.";
+        if (/document|window|navigator|localStorage/i.test(errMsg)) {
+          appendConsole("warn", "Detected browser API usage. Re-running in browser iframe...");
+          await runJsInBrowserIframe(jsFile.content);
+        } else {
+          appendConsole("error", errMsg);
+        }
       }
+    } catch {
+      appendSystem("Backend unavailable — running in browser iframe.");
+      await runJsInBrowserIframe(jsFile.content);
     } finally {
       setIsRunningJsOnly(false);
     }
-  }, [activeFile, appendConsole, appendSystem, callRunnerApi, files]);
+  }, [activeFile, appendConsole, appendSystem, callRunnerApi, files, runJsInBrowserIframe]);
 
   const runNodeCommand = useCallback(
     async (command: string) => {
@@ -618,7 +724,18 @@ export default function App() {
           const lv = entry.level === "warn" || entry.level === "error" ? entry.level : "log";
           appendConsole(lv, entry.level === "result" ? `↩ ${entry.message}` : entry.message);
         });
-        if (!payload.ok) appendConsole("error", payload.error ?? "Command failed.");
+        if (!payload.ok) {
+          const errMsg = payload.error ?? "Command failed.";
+          if (/document is not defined|window is not defined|navigator is not defined/i.test(errMsg)) {
+            const fileName = trimmed.replace(/^node\s+/, "").split(/\s+/)[0];
+            appendConsole(
+              "warn",
+              `${fileName} uses browser APIs (document, window…) which are not available in Node.js.\n  → Use "Run All" to render it in the browser preview.`
+            );
+          } else {
+            appendConsole("error", errMsg);
+          }
+        }
       } catch {
         runNodeCommandInBrowser(trimmed);
       } finally {
