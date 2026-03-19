@@ -48,6 +48,17 @@ Every package extends `tsconfig.base.json` which sets `composite: true`. The roo
 - `pnpm run build` — runs `typecheck` first, then recursively runs `build` in all packages that define it
 - `pnpm run typecheck` — runs `tsc --build --emitDeclarationOnly` using project references
 
+## Artifacts
+
+### `artifacts/web-code-editor` (`@workspace/web-code-editor`)
+
+VS Code-inspired web IDE. Monaco editor with multi-file support (.html, .css, .js), live preview iframe, terminal panel, dark/light theme, resizable panels, and local storage persistence. Download project as ZIP. Sandbox JS execution via backend API.
+
+- Entry: `src/main.tsx`
+- App: `src/App.tsx` — single-file full IDE implementation
+- Preview path: `/`
+- Key dependencies: `@monaco-editor/react`, `jszip`
+
 ## Packages
 
 ### `artifacts/api-server` (`@workspace/api-server`)
